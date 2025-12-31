@@ -1,10 +1,10 @@
-# GCNPath2025
+# GCNPath2026
 
 ![_GCNPath](https://github.com/user-attachments/assets/13d9a4da-4efa-4548-bec6-91459141d176)
 
 GCNPath is a graph-based deep learning model designed for predicting anticancer drug responses. The model utilizes pathway crosstalk network (PCN) graphs, which are compressed from STRING and RegNetwork, along with a GSVA pathway correlation network. GCNPath is trained using transcriptome data from the SANGER Cell Model Passports.
 
-The ```GCNPath2025``` directory was originally a subdirectory within ```_IC50_Prediction/benchmark_test```, where the benchmark tests are implemented. The ```_IC50_Prediction``` directory serves as the root directory for the GCNPath project, containing benchmark tests as well as preprocessing steps for cell lines, drugs, and ln(IC<sub>50</sub>) data.
+The ```GCNPath2026``` directory was originally a subdirectory within ```_IC50_Prediction/benchmark_test```, where the benchmark tests are implemented. The ```_IC50_Prediction``` directory serves as the root directory for the GCNPath project, containing benchmark tests as well as preprocessing steps for cell lines, drugs, and ln(IC<sub>50</sub>) data.
 
 # Quick start
 ```
@@ -18,9 +18,9 @@ bash test_ccle.sh
 ```
 
 # Directory Structure
-## GCNPath2025
+## GCNPath2026
 ```
-GCNPath2025
+GCNPath2026
 ├── SMILESVec                       
 │   └── source
 │       └── process_drug_svec.sh    Process drug data into SMILESVec Fingerprint
@@ -69,7 +69,7 @@ GCNPath2025
 ```
 
 ## _IC50_Prediction
-The ```GCNPath2025``` directory was originally a subdirectory within ```_IC50_Prediction/benchmark_test```
+The ```GCNPath2026``` directory was originally a subdirectory within ```_IC50_Prediction/benchmark_test```
 ```
 _IC50_Prediction
 ├── benchmark_test
