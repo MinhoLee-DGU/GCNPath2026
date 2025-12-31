@@ -9,6 +9,7 @@ suppressMessages(library(graphite))
 suppressMessages(library(reshape2))
 
 source("../functions.R")
+source("functions.R")
 loadings()
 
 
@@ -82,75 +83,7 @@ if (examine_asinh) {
 
 ##### 2. Calculate pathway activity scores [GSVA]
 
-gsva_def = function(Omics, Path_List, method="gsva", 
-                    filt_genes=T, do_qnorm=F, cores=10, ...) {
-  
-  # Method : gsva or ssgsea
-  # Input : Omics [Cell x Genes]
-  # Output : Omics [Cell x Pathways]
-  # Quantile Normalization is not recommended in ssGSEA
-  
-  suppressMessages(library(GSVA))
-  suppressMessages(library(stats))
-  gene_list = Path_List %>% unlist %>% unique
-  
-  n_before = length(gene_list)
-  n_after = sum(colnames(Omics) %in% gene_list)
-  int_ratio = round(100 * n_after/n_before, 2)
-  sprintf("# Omics data contain %s%% pathway genes... [%s / %s]", int_ratio, n_after, n_before) %>% print
-  
-  if (filt_genes) {
-    n_before = ncol(Omics)
-    Omics = Omics[, colnames(Omics) %in% gene_list]
-    sprintf("# Genes are filtered from omics data... [%s > %s]", n_before, n_after) %>% print
-  } else print("# Genes are not filtered from omics data...")
-  
-  Omics = Omics %>% t %>% as.matrix
-  
-  if (do_qnorm) {
-    suppressMessages(library(preprocessCore))
-    Omics = Omics %>% normalize.quantiles(keep.names=T)
-  }
-  
-  Omics_Path = gsva(Omics, Path_List, method=method, parallel.sz=cores, ...)
-  Omics_Path = Omics_Path %>% t %>% as.data.frame
-  return(Omics_Path)
-}
-
-singscore_def = function(Omics, Path_List, path_names=NULL, filt_genes=T, 
-                         direction=T, center=T, stableGenes=NULL, ...) {
-  
-  # Input : Omics [Cell x Genes]
-  # Output : Omics [Cell x Pathways]
-  
-  suppressMessages(library(GSEABase))
-  suppressMessages(library(singscore))
-  gene_list = Path_List %>% unlist %>% unique
-  
-  n_before = length(gene_list)
-  n_after = sum(colnames(Omics) %in% gene_list)
-  int_ratio = round(100 * n_after/n_before, 2)
-  sprintf("# The omics data contain %s%% pathway genes... [%s / %s]", int_ratio, n_after, n_before) %>% print
-  
-  if (filt_genes) {
-    n_before = ncol(Omics)
-    Omics = Omics[, colnames(Omics) %in% gene_list]
-    sprintf("# Genes are filtered from omics data... [%s > %s]", n_before, n_after) %>% print
-  } else print("# Genes are not filtered from omics data...")
-  
-  if (is.null(path_names)) path_names = names(Path_List)
-  Path_List = Path_List %>% lapply(GeneSet)
-  Omics = Omics %>% t %>% rankGenes(stableGenes=stableGenes)
-  for (i in 1:length(path_names)) Path_List[[i]]@setName = path_names[[i]]
-  
-  Omics_Path = multiScore(Omics, upSetColc=Path_List, knownDirection=direction, centerScore=center, ...)
-  Omics_Path = Omics_Path[[1]] %>% t %>% as.data.frame
-  return(Omics_Path)
-}
-
-
 ### GSVA vs ssGSEA & singscore
-
 rna_genes = SANGER_RNA %>% colnames
 sum(path_genes %in% rna_genes)   # 99.80% [1506/1509]
 
@@ -161,22 +94,6 @@ Path_List %>% sapply(function(x) length(intersect(x, rna_genes))/length(x)) %>% 
 
 
 ### 2-1. GSVA is sensitive to the number of total genes in omics data? [X]
-
-examine_cell_pair = function(Omics_Path_Ref, Omics_Path, col_common=NULL, method=NULL, cores=T) {
-  
-  nrmse = function(x, y) RMSE_Norm(x, y, na.rm=T)
-  if (is.null(col_common)) col_common = colnames(Omics_Path)
-  Corr_Info = corr_pair(Omics_Path[, col_common], Omics_Path_Ref[, col_common], by_row=T, into_wide=F)
-  RMSE_Info = stat_pair(Omics_Path[, col_common], Omics_Path_Ref[, col_common], by_row=T, into_wide=F, method=nrmse, cores=cores)
-  
-  by = c("Cell1"="Cell1", "Cell2"="Cell2")
-  colnames(Corr_Info) = c("Cell1", "Cell2", "Corr")
-  colnames(RMSE_Info) = c("Cell1", "Cell2", "NRMSE")
-  
-  Cell_Info = merge(RMSE_Info, Corr_Info, by=by) %>% mutate(Method=method)
-  return(Cell_Info)
-}
-
 
 # Define stable genes as those with lowest sd
 stable = getStableGenes(n_stable=1000, type="carcinoma")   # 1000
@@ -295,20 +212,6 @@ Ex_Filt_SING_ST %>% plot_ex_filt(main=main[6])
 ### 2-2. GSVA can calculate the pathway scores differently in different cells? [O]
 # Except GSVA, all methods process cells in similar values...
 
-examine_cell = function(Omics_Path, method) {
-  
-  nrmse = function(x, y) RMSE_Norm(x, y, na.rm=T)
-  Corr_Info = Omics_Path %>% corr_self(by_row=T, into_wide=F)
-  RMSE_Info = Omics_Path %>% stat_self(by_row=T, into_wide=F, method=nrmse)
-  
-  by = c("Cell1"="Cell1", "Cell2"="Cell2")
-  colnames(Corr_Info) = c("Cell1", "Cell2", "Corr")
-  colnames(RMSE_Info) = c("Cell1", "Cell2", "NRMSE")
-  
-  Cell_Info = merge(RMSE_Info, Corr_Info, by=by) %>% mutate(Method=method)
-  return(Cell_Info)
-}
-
 Corr_Diff_ZNorm = SANGER_ZNorm %>% examine_cell(methods[1])
 Corr_Diff_ssGSEA = SANGER_ssGSEA %>% examine_cell(methods[2])
 Corr_Diff_ssGSEA_NN = SANGER_ssGSEA_NN %>% examine_cell(methods[3])
@@ -424,15 +327,15 @@ col = c("Cell1", "Cell2", "Corr", "Method")
 rbind_ = function(df1, df2) rbind(df1[, col], df2[, col])
 
 Corr_SANGER_CCLE = Reduce(rbind_, 
-                          list(Corr_CCLE_Raw, Corr_CCLE_Asinh, Corr_CCLE_ZNorm, Corr_CCLE_ZGene, 
-                               Corr_CCLE_ssGSEA, Corr_CCLE_ssGSEA_NN, 
-                               Corr_CCLE_GSVA, Corr_CCLE_SING, Corr_CCLE_SING_ST)
+  list(Corr_CCLE_Raw, Corr_CCLE_Asinh, Corr_CCLE_ZNorm, Corr_CCLE_ZGene, 
+       Corr_CCLE_ssGSEA, Corr_CCLE_ssGSEA_NN, 
+       Corr_CCLE_GSVA, Corr_CCLE_SING, Corr_CCLE_SING_ST)
 )   # 14996880
 
 Corr_SANGER_GDSC = Reduce(rbind_, 
-                          list(Corr_GDSC_Raw, Corr_GDSC_Asinh, Corr_GDSC_ZNorm, Corr_GDSC_ZGene, 
-                               Corr_GDSC_ssGSEA, Corr_GDSC_ssGSEA_NN, 
-                               Corr_GDSC_GSVA, Corr_GDSC_SING, Corr_GDSC_SING_ST)
+  list(Corr_GDSC_Raw, Corr_GDSC_Asinh, Corr_GDSC_ZNorm, Corr_GDSC_ZGene, 
+       Corr_GDSC_ssGSEA, Corr_GDSC_ssGSEA_NN, 
+       Corr_GDSC_GSVA, Corr_GDSC_SING, Corr_GDSC_SING_ST)
 )   # 10077102
 
 colnames(Corr_SANGER_CCLE)[1:2] = c("SANGER", "CCLE")
@@ -655,77 +558,8 @@ fwrite(Corr_SANGER_GDSC_Norm, file=file[2])
 
 pca_chembl = F
 if (pca_chembl) {
-  pca_exp = function(EXP, db=NULL, tcga_code=NULL, db_lvl=NULL, rank=10) {
-    
-    sd_zero = (sapply(EXP, sd)==0)
-    if (any(sd_zero)) sprintf("# Num of SD=0 : %s", sum(sd_zero)) %>% print
-    
-    EXP_PCA = EXP[, !sd_zero] %>% prcomp(center=T, scale=T, rank.=rank)
-    EXP_PCA = EXP_PCA$x %>% as.data.frame
-    
-    if (!is.null(tcga_code)) {
-      EXP_PCA = EXP_PCA %>% mutate(TCGA_Code=tcga_code) %>% 
-        relocate(Database, .before=everything())
-    }
-    
-    if (!is.null(db)) {
-      EXP_PCA = EXP_PCA %>% mutate(Database=db) %>% 
-        relocate(Database, .before=everything())
-    }
-    
-    if (!is.null(db_lvl)) {
-      EXP_PCA$Database = EXP_PCA$Database %>% factor(levels=db_lvl)
-    }
-    
-    return(EXP_PCA)
-  }
-  
-  plot_pca_batch = function(Omics_List, db_list=NULL, tcga_list=NULL, main=NULL, 
-                            size=0.5, width=16.5, height=13.5, save=T, return_pca=T, ...) {
-    
-    # Omics_List [List] : Omics_Source, Omics_Target1, Omics_Target2, ...
-    # tcga_list [List] : tcga_source, tcga_target1, tcga_target2, ...
-    # db_list [Character] : db_source, db_target1, db_target2, ... 
-    
-    # Annotation Label [TCGA Code]
-    if (!is.null(tcga_list)) {
-      tcga_code = tcga_list %>% unlist
-      cond = length(Omics_List)==length(tcga_list)
-      for (i in 1:length(Omics_List)) {
-        cond = cond & (nrow(Omics_List)[[i]]==length(tcga_list[[i]]))
-      }
-      if (!cond) stop("Check the TCGA Codes...")
-    } else {
-      tcga_code = NULL
-    }
-    
-    # Annotation Label [DB]
-    n_samples = Omics_List %>% sapply(nrow)
-    db = rep(db_list, n_samples)
-    
-    # Compress Omics Data by PCA
-    col = Reduce(intersect, lapply(Omics_List, colnames))
-    rbind_ = function(df1, df2) rbind(df1[, col], df2[, col])
-    Omics_PCA = Reduce(rbind_, Omics_List) %>% 
-      pca_exp(db=db, tcga_code=tcga_code, db_lvl=db_list)
-    
-    # Set X and Y Ranges
-    xlim = Omics_PCA$PC1 %>% range
-    ylim = Omics_PCA$PC2 %>% range
-    xlim = c(xlim[1]-0.1, xlim[2]+0.1)
-    ylim = c(ylim[1]-0.1, ylim[2]+0.1)
-    
-    # Plot PCA [Source & Target]
-    Omics_PCA %>% arrange(Database) %>% 
-      plot_def(PC1, PC2, color=Database, shape=Database, main=main, 
-               legend="Database", xlim=xlim, ylim=ylim, xlab="PC1", ylab="PC2", 
-               size=size, width=width, height=height, save=save, save_svg=save, ...)
-    
-    if (return_pca) return(Omics_PCA)
-  }
-  
   # Cell_Drug_Pair
-  dir = "../../do_better/_performance_chembl"
+  dir = "../../benchmark_test/_performance_chembl"
   file = sprintf("%s/Cell_Drug_Pair.csv", dir)
   Cell_Drug_Pair = read.csv(file)
   
@@ -765,7 +599,7 @@ if (pca_chembl) {
   db_list = c("SANGER", "CCLE", "GDSC")
   
   methods = c("No_Norm", "ArcSinh", "Z_Sample", "Z_Gene", "ssGSEA", "ssGSEA_Norm_X", "GSVA", "singscore", "stingscore")
-  dir = mkdir("../../do_better/_performance_chembl/PC2 Plot [SANGER & CCLE & GDSC]")
+  dir = mkdir("../../benchmark_test/_performance_chembl/PC2 Plot [SANGER & CCLE & GDSC]")
   main = sprintf("%s/PC2 Plot of SANGER & CCLE & GDSC [%s]", dir, methods)
   
   shape = c(21, 22, 24)
@@ -820,33 +654,61 @@ if (pca_chembl) {
   names(color) = c("Same", "Different")
   add = list(scale_fill_manual(values=color))
   
-  Corr_SANGER_CCLE %>% as.data.frame %>% 
-    subset(SANGER %in% cells_chembl & CCLE %in% cells_chembl) %>% 
+  Corr_SANGER_CCLE_Norm = Corr_SANGER_CCLE_Norm %>% as.data.table
+  Corr_SANGER_GDSC_Norm = Corr_SANGER_GDSC_Norm %>% as.data.table
+  
+  Corr_List = list()
+  Corr_List[[1]] = Corr_SANGER_CCLE[SANGER %in% cells_chembl & CCLE %in% cells_chembl]
+  Corr_List[[2]] = Corr_SANGER_GDSC[SANGER %in% cells_chembl & GDSC %in% cells_chembl]
+  Corr_List[[3]] = Corr_SANGER_CCLE_Norm[SANGER %in% cells_chembl & CCLE %in% cells_chembl]
+  Corr_List[[4]] = Corr_SANGER_GDSC_Norm[SANGER %in% cells_chembl & GDSC %in% cells_chembl]
+  
+  Corr_List[[1]] %>% as.data.frame %>% 
     boxplot_def(Method, Corr, fill=Cell_Pair, main=file1[1], add=add, pos=pos, 
                 ylab=ylab[1], legend=legend, width=width, height=height, 
                 alpha=0.9, text_ratio=1.8, hjust=1, vjust=1, dpi=1200, 
-                point=F, violin=F, raster=T, save=T, save_svg=T)
+                point=T, violin=F, raster=T, save=T, save_svg=T)
   
-  Corr_SANGER_GDSC %>% as.data.frame %>% 
-    subset(SANGER %in% cells_chembl & GDSC %in% cells_chembl) %>% 
+  Corr_List[[2]] %>% as.data.frame %>% 
     boxplot_def(Method, Corr, fill=Cell_Pair, main=file1[2], add=add, pos=pos, 
                 ylab=ylab[1], legend=legend, width=width, height=height, 
                 alpha=0.9, text_ratio=1.8, hjust=1, vjust=1, dpi=1200, 
-                point=F, violin=F, raster=T, save=T, save_svg=T)
+                point=T, violin=F, raster=T, save=T, save_svg=T)
   
-  Corr_SANGER_CCLE_Norm %>% as.data.frame %>%
-    subset(SANGER %in% cells_chembl & CCLE %in% cells_chembl) %>% 
+  Corr_List[[3]] %>% as.data.frame %>%
     boxplot_def(Method, Corr, fill=Cell_Pair, main=file2[1], add=add, pos=pos,
                 ylab=ylab[1], legend=legend, width=width, height=height,
                 alpha=0.9, text_ratio=1.8, hjust=1, vjust=1, dpi=1200,
-                point=F, violin=F, raster=T, save=T, save_svg=T)
+                point=T, violin=F, raster=T, save=T, save_svg=T)
   
-  Corr_SANGER_GDSC_Norm %>% as.data.frame %>%
-    subset(SANGER %in% cells_chembl & GDSC %in% cells_chembl) %>% 
+  Corr_List[[4]] %>% as.data.frame %>%
     boxplot_def(Method, Corr, fill=Cell_Pair, main=file2[2], add=add, pos=pos,
                 ylab=ylab[1], legend=legend, width=width, height=height,
                 alpha=0.9, text_ratio=1.8, hjust=1, vjust=1, dpi=1200,
-                point=F, violin=F, raster=T, save=T, save_svg=T)
+                point=T, violin=F, raster=T, save=T, save_svg=T)
+  
+  col_old1 = c("SANGER", "CCLE", "Corr", "Method", "Cell_Pair")
+  col_old2 = c("SANGER", "GDSC", "Corr", "Method", "Cell_Pair")
+  col_new = c("Cell_SANGER", "Cell_Other_DB", "Corr", "Method", "Cell_Pair")
+  
+  setnames(Corr_List[[1]], col_old1, col_new)
+  setnames(Corr_List[[2]], col_old2, col_new)
+  setnames(Corr_List[[3]], col_old1, col_new)
+  setnames(Corr_List[[4]], col_old2, col_new)
+  
+  Corr_List[[1]]$Other_DB = "CCLE"
+  Corr_List[[2]]$Other_DB = "GDSC"
+  Corr_List[[3]]$Other_DB = "CCLE_After_Norm"
+  Corr_List[[4]]$Other_DB = "GDSC_After_Norm"
+  
+  Corr_List = rbindlist(Corr_List)
+  setkey(Corr_List, Cell_SANGER, Cell_Other_DB, Method, Cell_Pair, Other_DB)
+  
+  Corr_List = dcast(
+    Corr_List,
+    Cell_SANGER+Cell_Other_DB+Method+Cell_Pair~Other_DB,
+    value.var = "Corr"
+  )
 }
 
 
@@ -854,31 +716,17 @@ if (pca_chembl) {
 
 ### 2-4. Complete Pathway-Pathway correlation network [RNA, k=5]
 
-knn_graph = function(Network, k=5, mode="min", col_stat="Dist", filt_na=F) {
-  
-  # Complete KNN graph from Network
-  # Network should have the following columns
-  # Pathway1, Pathway2, col_stat [Dist or Corr]
-  
-  Network_Rev = Network %>% dplyr::rename(Pathway1=Pathway2, Pathway2=Pathway1)
-  Network = Network %>% rbind(Network_Rev) %>% distinct(Pathway1, Pathway2, .keep_all=T)
-  
-  filter_net = ifelse(mode=="max", slice_max, slice_min)
-  if (filt_na) Network = Network %>% subset(!is.na(object(col_stat)))
-  
-  Network_KNN = Network %>% group_by(Pathway1) %>% 
-    filter_net(object(col_stat), n=k) %>% as.data.frame   # n x (n-1) > n x k
-  
-  return(Network_KNN)
-}
-
 RNA_Corr = SANGER_GSVA %>% cor %>% reshape2::melt() %>% as.data.frame
 colnames(RNA_Corr) = c("Pathway1", "Pathway2", "Corr")
-RNA_Corr = RNA_Corr %>% subset(Pathway1!=Pathway2)
-RNA_Corr_KNN = RNA_Corr %>% knn_graph(col_stat="Corr", mode="max", k=5)
+RNA_Corr = RNA_Corr %>% subset(Pathway1!=Pathway2)   # 36672 [192 x 191]
+
+RNA_Corr_KNN3 = RNA_Corr %>% knn_graph(col_stat="Corr", mode="max", k=3)   # 576
+RNA_Corr_KNN5 = RNA_Corr %>% knn_graph(col_stat="Corr", mode="max", k=5)   # 960
+RNA_Corr_KNN7 = RNA_Corr %>% knn_graph(col_stat="Corr", mode="max", k=7)   # 1344
 
 # RNA_Corr$Corr %>% hist
-# RNA_Corr_KNN$Corr %>% hist
+# RNA_Corr_KNN3$Corr %>% hist
+# RNA_Corr_KNN5$Corr %>% hist
 
 
 # Save files
@@ -901,8 +749,10 @@ write.csv(GDSC_RNA_SING, file=file[2], row.names=T)
 write.csv(CCLE_RNA_SING, file=file[3], row.names=T)
 
 dir = mkdir("../../processed_data/net_data/BIOCARTA")
-file = sprintf("%s/RNA_Corr_KNN.csv", dir)
-write.csv(RNA_Corr_KNN, file=file[2], row.names=F)
+file = sprintf("%s/RNA_Corr_KNN%s.csv", dir, c(3, 5, 7))
+write.csv(RNA_Corr_KNN3, file=file[1], row.names=F)
+write.csv(RNA_Corr_KNN5, file=file[2], row.names=F)
+write.csv(RNA_Corr_KNN7, file=file[3], row.names=F)
 
 file = sprintf("%s/RNA_Corr.csv", dir)
 write.csv(RNA_Corr, file=file, row.names=F)
@@ -911,278 +761,6 @@ write.csv(RNA_Corr, file=file, row.names=F)
 
 ### 2-5. Compress STRING & RegNetwork into Pathway-Pathway Association network [k=5]
 # [2015] Uncovering disease-disease relationships through the incomplete interactome
-
-calc_sep_score = function(Network, geneset_A, geneset_B) {
-  
-  # Calculate separation score of a pair of pathways
-  # This function requires the installation of dnet, igraph package
-  # Users must use the function separation_score, rather than this function
-  
-  inf_omit = function(x) x[!is.infinite(x)]
-  dist_AA = distances(Network, geneset_A, geneset_A, mode="out") %>% as.numeric %>% inf_omit %>% mean
-  dist_BB = distances(Network, geneset_B, geneset_B, mode="out") %>% as.numeric %>% inf_omit %>% mean
-  dist_AB = distances(Network, geneset_A, geneset_B, mode="out") %>% as.numeric %>% inf_omit %>% mean
-  
-  if (dist_AA==0 | is.na(dist_AA)) dist_AA = NA
-  if (dist_BB==0 | is.na(dist_BB)) dist_BB = NA
-  if (is.nan(dist_AB)) dist_AB = NA
-  
-  # Separation score is only calculated when all dists are calculated
-  # If geneset_A are not connected, dist_AA = 0 > NA
-  # If geneset_B are not connected, dist_BB = 0 > NA
-  # If geneset_AB are not connected, dist_AB = NaN > NA
-  
-  ss_AB = dist_AB - (dist_AA + dist_BB) / 2
-  ss_info = c(ss_AB, dist_AA, dist_BB, dist_AB)
-  return(ss_info)
-}
-
-separation_score = function(Network, Path_List, min_genes=NULL, verbose=T, cores=10) {
-  
-  # Calculate separation score of all pairwise pathways
-  # This function requires the installation of dnet, igraph package
-  # The Network should contain two columns named Node1, Node2
-  # Otherwise, the first two columns are recognized as Nodes
-  
-  suppressMessages(library(dnet))
-  cond1 = "Node1" %in% colnames(Network)
-  cond2 = "Node2" %in% colnames(Network)
-  
-  if (!cond1 | !cond2) {
-    Network = Network[, 1:2]
-    colnames(Network) = c("Node1", "Node2")
-  }
-  
-  genes_net = union(Network$Node1, Network$Node2)
-  genes_path = Path_List %>% unlist %>% unique
-  genes_int = intersect(genes_net, genes_path)
-  
-  Path_List_Ori = Path_List
-  int_ratio = length(genes_int) / length(genes_path)
-  Path_List = Path_List %>% sapply(function(x) x[x %in% genes_int])
-  
-  sprintf("# Pathway size range : [%s, %s]", 
-          min(sapply(Path_List, length)), max(sapply(Path_List, length))) %>% print
-  
-  sprintf("# Total Genes utilized : %.2f%% [%s/%s]", 
-          int_ratio*100, length(genes_int), length(genes_path)) %>% print
-  
-  if (is.numeric(min_genes)) {
-    idx = sapply(Path_List, length)>=min_genes
-    Path_List = Path_List[idx]
-    sprintf("# Total Pathway utilized : %.2f%% [%s/%s]", 
-            100 * sum(idx) / length(idx), sum(idx), length(idx)) %>% print
-  }
-  
-  Network = Network %>% dplyr::select(from=Node1, to=Node2)
-  Network = Network %>% graph_from_data_frame(directed=T)
-  nC2 = combn(length(Path_List), 2) %>% t   
-  # [n_path x (n_path-1)/2, 2]
-  
-  if (cores<2) {
-    Network_SS = data.frame()
-    for (i in 1:nrow(nC2)) {
-      path_A = names(Path_List)[nC2[i, 1]]
-      path_B = names(Path_List)[nC2[i, 2]]
-      geneset_A = Path_List[[path_A]]
-      geneset_B = Path_List[[path_B]]
-      
-      ss_info = calc_sep_score(Network, geneset_A, geneset_B)
-      Network_SS_ = c(path_A, path_B, ss_info)
-      Network_SS = Network_SS %>% rbind(Network_SS_)
-    }
-  } else {
-    cluster = multicores(cores=cores)
-    Network_SS = foreach (i=1:nrow(nC2), .combine=rbind) %dopar% {
-      path_A = names(Path_List)[nC2[i, 1]]
-      path_B = names(Path_List)[nC2[i, 2]]
-      geneset_A = Path_List[[path_A]]
-      geneset_B = Path_List[[path_B]]
-      
-      ss_info = calc_sep_score(Network, geneset_A, geneset_B)
-      Network_SS_ = c(path_A, path_B, ss_info)
-      return(Network_SS_)
-    }
-    Network_SS = Network_SS %>% as.data.frame
-    stopCluster(cluster)
-  }
-  
-  rownames(Network_SS) = NULL
-  Network_SS[, 3:6] = Network_SS[, 3:6] %>% sapply(as.numeric)
-  colnames(Network_SS) = c("Pathway1", "Pathway2", "Dist", "Dist_P1", "Dist_P2", "Dist_P1_P2")
-  
-  inlen = function(x, y) intersect(x, y) %>% length
-  num_overlap = nC2 %>% apply(1, function(x) Reduce(inlen, Path_List_Ori[x]))
-  Network_SS$Num_Overlap = num_overlap
-  
-  Path_Nums = sapply(Path_List_Ori, length)
-  idx1 = match(Network_SS$Pathway1, names(Path_Nums))
-  idx2 = match(Network_SS$Pathway2, names(Path_Nums))
-  
-  Network_SS = Network_SS %>% 
-    mutate(Num1 = Path_Nums[idx1], Num2 = Path_Nums[idx2],
-           Ratio_Overlap = Num_Overlap / (Num1+Num2-Num_Overlap)) %>% 
-    relocate(Num_Overlap, .before=Ratio_Overlap)
-  
-  # Undirect the Pathway-Pathway Interaction Graph
-  Network_SS_Rev = Network_SS
-  colnames(Network_SS_Rev)[1:2] = c("Pathway2", "Pathway1")
-  Network_SS = Network_SS %>% rbind(Network_SS_Rev)
-  
-  return(Network_SS)
-}
-
-ggnet2_def = function(Network, col_from=NULL, col_to=NULL, main=NULL, nodes=NULL, add=NULL,
-                      color="steelblue1", color_edge="grey50", size=4, size_edge=0.4, 
-                      alpha=1, alpha_edge=0.8, width=18, height=15, dpi=400,
-                      label=NULL, input_net=F, verbose=T, save=F) {
-  
-  # suppressMessages(library(ggnetwork))
-  # suppressMessages(library(GGally))
-  # suppressMessages(library(intergraph))
-  
-  if (!input_net) {
-    if (!is.null(col_from) & !is.null(col_to)) {
-      col_from = deparse(substitute(col_from))
-      col_to = deparse(substitute(col_to))
-      Network = Network[, c(col_from, col_to)]
-    } else Network = Network[, 1:2]
-    
-    # Funciton graph_from_data_frame automatically takes edges from first 2 columns
-    # Function ggnet2 cannot plot multiple node-node relations [should set directed=T]
-    Network = Network %>% graph_from_data_frame(directed=T)
-  }
-  
-  if (verbose) {
-    net_info = igraph::components(Network)
-    sprintf("# Nodes Number : %s", length(V(Network))) %>% print
-    sprintf("# Edges Number : %s", length(E(Network))) %>% print
-    sprintf("# Subgraph Number : %s", net_info$no) %>% print
-    for (i in 1:length(net_info$csize)) {
-      sprintf("# Subgraph Size [%sth] : %s", i, net_info$csize[i]) %>% print
-    }
-  }
-  
-  V(Network)$color = color
-  if (!is.null(nodes)) {
-    Network = delete_vertices(Network, !(names(V(Network)) %in% nodes))
-  }
-  
-  Network = ggnetwork(Network)
-  if (!is.null(label)) {
-    Network$name = ifelse(Network$name %in% label, Network$name, NA)
-  }
-  
-  pl = ggplot(Network, aes(x=x, y=y, xend=xend, yend=yend)) + 
-    theme_blank() + 
-    geom_edges(color=color_edge, alpha=alpha_edge, size=size_edge) + 
-    geom_nodes(color=color, alpha=alpha, size=size)
-  
-  # geom_nodetext_repel(aes(label=name), max.overlaps=10)
-  if (!is.null(add)) for (i in 1:length(add)) pl = pl + add[[i]]
-  
-  if (save) {
-    save_fig(pl, main=main, width=width, height=height, units="cm", svg=T)
-  } else print(pl)
-}
-
-knn_graph_ovl = function(Network_SS, k=5, inverse=F) {
-  
-  # Complete a KNN graph from the separation score
-  # Network_SS should have the following columns
-  # [Pathway1, Pathway2, Dist, Ratio_Overlap]
-  
-  # If tied with or do not have separation scores [Dist],
-  # Filter the pairs by pathway overlap ratios [Ratio_Overlap]
-  # Some pathways might not have KNN by utilizing either Dist or Ratio_Overlap
-  
-  if (!inverse) {
-    Network_KNN = Network_SS %>% mutate(Pathway=as.factor(Pathway1)) %>% 
-      group_by(Pathway) %>% arrange(Dist, desc(Ratio_Overlap), .by_group=T) %>% 
-      do(head(., n=k)) %>% subset(!is.na(Dist) | !Ratio_Overlap==0) %>% as.data.frame
-  } else {
-    Network_KNN = Network_SS %>% mutate(Pathway=as.factor(Pathway1)) %>% 
-      group_by(Pathway) %>% arrange(desc(Dist), Ratio_Overlap, .by_group=T) %>% 
-      do(head(., n=k)) %>% as.data.frame
-  }
-  
-  info_knn = Network_KNN$Pathway %>% table
-  idx = which(info_knn != k)
-  
-  if (length(idx)!=0) {
-    for (i in idx) {
-      path = names(info_knn)[i]
-      num_nn = info_knn[i]
-      sprintf("# Pathway with lower than k-edges : %s [%s]", path, num_nn) %>% print
-    }
-  }
-  
-  num_full = length(info_knn) * k
-  sprintf("# The num of KNN edges : %s / %s", nrow(Network_KNN), num_full) %>% print
-  return(Network_KNN)
-}
-
-knn_graph_rand = function(Path_List, k=5, seed=2021) {
-  
-  set.seed(seed)
-  Network_KNN = data.frame()
-  pathways = Path_List %>% names
-  
-  for (i in 1:length(pathways)) {
-    path_query = rep(pathways[i], k)
-    path_rand = sample(pathways[-i], k)
-    Network_KNN_ = data.frame(Pathway1=path_query, Pathway2=path_rand)
-    Network_KNN = Network_KNN %>% rbind(Network_KNN_)
-  }
-  
-  sprintf("KNN Edges : %s", nrow(Network_KNN)) %>% print
-  return(Network_KNN)
-}
-
-row_overlap = function(df1, df2, col=c("Pathway1", "Pathway2"), verbose=T) {
-  
-  nrow_min = min(nrow(df1), nrow(df2))
-  if (is.null(col)) col = intersect(colnames(df1), colnames(df2))
-  nrow_overlap = generics::intersect(df1[, col], df2[, col]) %>% nrow
-  per_overlap = 100 * nrow_overlap / nrow_min
-  
-  if (verbose) {
-    sprintf("Row Intersect : %s / %s [%.2f%%]", nrow_overlap, nrow_min, per_overlap) %>% print
-  } else return(per_overlap)
-}
-
-row_overlap_heatmap = function(Net_List, col=c("Pathway1", "Pathway2"), 
-                               net_names=NULL, main=NULL, size=6.4, round=2, 
-                               width=22.5, height=16, dpi=400, save=T) {
-  
-  # Net_List = list(...)
-  if (is.null(net_names)) net_names = sprintf("Network%s", 1:length(Net_List))
-  
-  row_ovl = c()
-  names(Net_List) = net_names
-  Net_Overlap_Info = expand.grid(Net1=net_names, Net2=net_names)
-  
-  for (i in 1:nrow(Net_Overlap_Info)) {
-    net1 = Net_Overlap_Info$Net1[i]
-    net2 = Net_Overlap_Info$Net2[i]
-    row_ovl_temp = row_overlap(Net_List[[net1]], Net_List[[net2]], col=col, verbose=F)
-    row_ovl = row_ovl %>% c(row_ovl_temp)
-  }
-  
-  legend = "Similarity [%]"
-  Net_Overlap_Info$Similarity = row_ovl
-  color = scale_fill_gradient(low="white", high="firebrick3")
-  add = list(theme(legend.key.width=unit(0.8, "cm"), 
-                   legend.key.height=unit(1, "cm")))
-  
-  Net_Overlap_Info %>% 
-    grid_def(Net1, Net2, fill=Similarity, main=main, color=color,
-             mean_summary=F, legend=legend, dpi=dpi, size=size, add=add,
-             axis_tx=18, legend_tl=18, legend_tx=18, margin_lg=0.75, round=round, 
-             axis_face="plain", legend_face="plain", width=width, height=height, save=save)
-  
-  return(Net_Overlap_Info)
-}
 
 dir = "../../processed_data/net_data/STRING"
 file= sprintf("%s/STRING_Filt_Ent.csv", dir)
@@ -1221,6 +799,16 @@ main = sprintf("%s/Separation Score & Overlap Ratio [%s]", dir, net_type)
 
 xlab = "Separation Score"
 ylab = "Overlap Ratio"
+
+# STRING_700_SS %>% 
+#   plot_def(Dist, Ratio_Overlap, main=main[1], xlab=xlab, ylab=ylab, 
+#            alpha=0.5, axis_tl=20, save=T)   # [△]
+# STRING_900_SS %>% 
+#   plot_def(Dist, Ratio_Overlap, main=main[2], xlab=xlab, ylab=ylab, 
+#            alpha=0.5, axis_tl=20, save=T)   # [△]
+# RegNetwork_SS %>% 
+#   plot_def(Dist, Ratio_Overlap, main=main[3], xlab=xlab, ylab=ylab, 
+#            alpha=0.5,axis_tl=20, save=T)   # [O]
 
 col = list(fill="lightgray")
 margin = margin(10, 10, 10, 10, unit="pt")
@@ -1273,100 +861,82 @@ RegNetwork_SS %>% subset(Dist<0) %>%
 
 
 # KNN Graphs
-STRING_700_KNN = STRING_700_SS %>% knn_graph_ovl
-STRING_900_KNN = STRING_900_SS %>% knn_graph_ovl
-RegNetwork_KNN = RegNetwork_SS %>% knn_graph_ovl
+STRING_700_KNN3 = STRING_700_SS %>% knn_graph_ovl(k=3)   # 576 [192*3]
+STRING_900_KNN3 = STRING_900_SS %>% knn_graph_ovl(k=3)   # 576 [192*3]
+RegNetwork_KNN3 = RegNetwork_SS %>% knn_graph_ovl(k=3)   # 568 [192*3-]
+
+STRING_700_KNN5 = STRING_700_SS %>% knn_graph_ovl(k=5)   # 960 [192*5]
+STRING_900_KNN5 = STRING_900_SS %>% knn_graph_ovl(k=5)   # 960 [192*5]
+RegNetwork_KNN5 = RegNetwork_SS %>% knn_graph_ovl(k=5)   # 933 [192*5-]
+
+STRING_700_KNN7 = STRING_700_SS %>% knn_graph_ovl(k=7)   # 1344 [192*7]
+STRING_900_KNN7 = STRING_900_SS %>% knn_graph_ovl(k=7)   # 1344 [192*7]
+RegNetwork_KNN7 = RegNetwork_SS %>% knn_graph_ovl(k=7)   # 1289 [192*7-]
+
+# Cf. KNN Graphs with Maximum Separation Scores [Ablation Test]
+STRING_700_KNN5_Inv = STRING_700_SS %>% knn_graph_ovl(k=5, inverse=T)
+STRING_900_KNN5_Inv = STRING_900_SS %>% knn_graph_ovl(k=5, inverse=T)
+RegNetwork_KNN5_Inv = RegNetwork_SS %>% knn_graph_ovl(k=5, inverse=T)
+
 
 # KNN Graphs [Random]
 seed = 2021
-Random = knn_graph_rand(Path_List, seed=seed)
-# Random_ = knn_graph_rand(Path_List, seed=seed)
-# identical(Random_KNN, Random_KNN_)   # T
+Random_KNN3 = knn_graph_rand(Path_List, k=3, seed=seed)
+Random_KNN5 = knn_graph_rand(Path_List, k=5, seed=seed)
+Random_KNN7 = knn_graph_rand(Path_List, k=7, seed=seed)
 
-min_max_mean = function(x) {
-  c(mean(x, na.rm=T), min(x, na.rm=T), max(x, na.rm=T))
-}
-
-examine_graph = function(Network, col=c("Pathway1", "Pathway2")) {
-  
-  Network = Network[, col] %>% graph_from_data_frame(directed=T)
-  degree_list = Network %>% igraph::degree()
-  path_list = Network %>% igraph::distances() %>% as.data.frame %>% unlist
-  
-  num_subgraph = components(Network)$no
-  info_degree = degree_list %>% min_max_mean
-  info_path = path_list[path_list!=0] %>% min_max_mean
-  
-  info_graph = c(info_degree, info_path, num_subgraph)
-  return(info_graph)
-}
-
-examine_graph_list = function(..., net_names=NULL, col=c("Pathway1", "Pathway2")) {
-  
-  Network_Info = data.frame()
-  for (Network in list(...)) {
-    network_info = Network %>% examine_graph(col=col)
-    Network_Info = Network_Info %>% rbind(network_info)
-  }
-  
-  col_ = c("Mean", "Min", "Max")
-  col1 = sprintf("Degree_%s", col_)
-  col2 = sprintf("Path_%s", col_)
-  
-  col_info = c(col1, col2, "Num_Component")
-  colnames(Network_Info) = col_info
-  Network_Info = Network_Info %>% mutate(Network=net_names) %>% 
-    relocate(Network, .before=everything()) %>% as.data.frame
-  
-  return(Network_Info)
-}
-
-choose_freq_path = function(Network, col=c("Pathway1", "Pathway2"), top=10) {
-  col_rev = col %>% setNames(rev(col))
-  Network_Rev = Network %>% rename(col_rev)
-  Network_UD = Network[, col] %>% rbind(Network_Rev[, col]) %>% distinct
-  path_degree = Network_UD[[col[1]]] %>% table %>% sort(decreasing=T)
-  pathways = names(path_degree)[1:top]
-  return(pathways)
-}
+# Random_KNN3_ = knn_graph_rand(Path_List, k=3, seed=seed)
+# Random_KNN5_ = knn_graph_rand(Path_List, k=5, seed=seed)
+# Random_KNN7_ = knn_graph_rand(Path_List, k=7, seed=seed)
+# 
+# identical(Random_KNN3, Random_KNN3_)   # T
+# identical(Random_KNN5, Random_KNN5_)   # T
+# identical(Random_KNN7, Random_KNN7_)   # T
 
 net_names = c("STRING_700", "STRING_900", "RegNetwork", "RNA_Corr", "Random")
-PPA_Info = examine_graph_list(STRING_700_KNN, STRING_900_KNN, RegNetwork_KNN, 
-                              RNA_Corr_KNN, Random_KNN, net_names=net_names)
+PPA_Info = examine_graph_list(STRING_700_KNN5, STRING_900_KNN5, RegNetwork_KNN5, 
+                              RNA_Corr_KNN5, Random_KNN5, net_names=net_names)
 
 
 # All graphs have no multiple subgraphs
 suppressMessages(library(ggnetwork))
 main = c("GSVA_Corr", "RegNetwork", "STRING_700", "STRING_900")
 dir = mkdir("../../processed_data/net_data/BIOCARTA/Network_Analysis")
-file = sprintf("%s/KNN Graph [%s]", dir, main)
+file = sprintf("%s/KNN5 Graph [%s]", dir, main)
 
-label_corr = RNA_Corr_KNN %>% choose_freq_path(top=20)
-label_regnet = RegNetwork_KNN %>% choose_freq_path(top=20)
-label_str_700 = STRING_700_KNN %>% choose_freq_path(top=20)
-label_str_900 = STRING_900_KNN %>% choose_freq_path(top=20)
+label_corr = RNA_Corr_KNN5 %>% choose_freq_path(top=20)
+label_regnet = RegNetwork_KNN5 %>% choose_freq_path(top=20)
+label_str_700 = STRING_700_KNN5 %>% choose_freq_path(top=20)
+label_str_900 = STRING_900_KNN5 %>% choose_freq_path(top=20)
 
 color = "royalblue1"
 add = list(geom_nodetext_repel(aes(label=name), max.overlaps=8, force=2, size=3.2))
-RNA_Corr_KNN %>% ggnet2_def(main=file[1], color=color, label=label_corr, add=add, dpi=1500, save=T)
-RegNetwork_KNN %>% ggnet2_def(main=file[2], color=color, label=label_regnet, add=add, dpi=1500, save=T)
-STRING_700_KNN %>% ggnet2_def(main=file[3], color=color, label=label_str_700, add=add, dpi=1500, save=T)
-STRING_900_KNN %>% ggnet2_def(main=file[4], color=color, label=label_str_900, add=add, dpi=1500, save=T)
+RNA_Corr_KNN5 %>% ggnet2_def(main=file[1], color=color, label=label_corr, add=add, dpi=1500, save=T)
+RegNetwork_KNN5 %>% ggnet2_def(main=file[2], color=color, label=label_regnet, add=add, dpi=1500, save=T)
+STRING_700_KNN5 %>% ggnet2_def(main=file[3], color=color, label=label_str_700, add=add, dpi=1500, save=T)
+STRING_900_KNN5 %>% ggnet2_def(main=file[4], color=color, label=label_str_900, add=add, dpi=1500, save=T)
 
 # Similarity between KNN Networks [a little]
-row_overlap(STRING_700_KNN, STRING_900_KNN)
-row_overlap(STRING_700_KNN, RegNetwork_KNN)
-row_overlap(STRING_700_KNN, RNA_Corr_KNN)
+row_overlap(STRING_700_KNN5, STRING_900_KNN5)   # 694 / 960 [72.29%]
+row_overlap(STRING_700_KNN5, RegNetwork_KNN5)   # 226 / 933 [24.22%]
+row_overlap(STRING_700_KNN5, RNA_Corr_KNN5)     # 400 / 960 [41.67%]
 
 net_names = c("Random", "GSVA_Corr", "RegNetwork", "STRING_700", "STRING_900")
-KNN_List = list(Random_KNN, RNA_Corr_KNN, RegNetwork_KNN, STRING_700_KNN, STRING_900_KNN)
+KNN3_List = list(Random_KNN3, RNA_Corr_KNN3, RegNetwork_KNN3, STRING_700_KNN3, STRING_900_KNN3)
+KNN5_List = list(Random_KNN5, RNA_Corr_KNN5, RegNetwork_KNN5, STRING_700_KNN5, STRING_900_KNN5)
+KNN7_List = list(Random_KNN7, RNA_Corr_KNN7, RegNetwork_KNN7, STRING_700_KNN7, STRING_900_KNN7)
 
+knn = c("KNN3", "KNN5", "KNN7")
 dir = "../../processed_data/net_data/BIOCARTA/Network_Analysis"
-main = sprintf("%s/KNN Graph Similarity [KNN]", dir)
-KNN_Sim = row_overlap_heatmap(KNN_List, net_names=net_names, main=main[2], save=T)
+main = sprintf("%s/KNN Graph Similarity [%s]", dir, knn)
+
+KNN3_Sim = row_overlap_heatmap(KNN3_List, net_names=net_names, main=main[1], save=T)
+KNN5_Sim = row_overlap_heatmap(KNN5_List, net_names=net_names, main=main[2], save=T)
+KNN7_Sim = row_overlap_heatmap(KNN7_List, net_names=net_names, main=main[3], save=T)
 
 file = sprintf("%s/PPA_Information.csv", dir)
 write.csv(PPA_Info, file=file, row.names=F)
+
 
 
 
@@ -1380,31 +950,274 @@ write.csv(STRING_700_SS, file=file[1], row.names=F)
 write.csv(STRING_900_SS, file=file[2], row.names=F)
 write.csv(RegNetwork_SS, file=file[3], row.names=F)
 
-file = sprintf("%s/KNN_STRING_700.csv", dir)
-write.csv(STRING_700_KNN, file=file, row.names=F)
+file = sprintf("%s/KNN%s_STRING_700.csv", dir, c(3, 5, 7))
+write.csv(STRING_700_KNN3, file=file[1], row.names=F)
+write.csv(STRING_700_KNN5, file=file[2], row.names=F)
+write.csv(STRING_700_KNN7, file=file[3], row.names=F)
 
-file = sprintf("%s/KNN_STRING_900.csv", dir)
-write.csv(STRING_900_KNN, file=file, row.names=F)
+file = sprintf("%s/KNN%s_STRING_900.csv", dir, c(3, 5, 7))
+write.csv(STRING_900_KNN3, file=file[1], row.names=F)
+write.csv(STRING_900_KNN5, file=file[2], row.names=F)
+write.csv(STRING_900_KNN7, file=file[3], row.names=F)
 
-file = sprintf("%s/KNN_RegNetwork.csv", dir)
-write.csv(RegNetwork_KNN, file=file, row.names=F)
+file = sprintf("%s/KNN%s_RegNetwork.csv", dir, c(3, 5, 7))
+write.csv(RegNetwork_KNN3, file=file[1], row.names=F)
+write.csv(RegNetwork_KNN5, file=file[2], row.names=F)
+write.csv(RegNetwork_KNN7, file=file[3], row.names=F)
 
-file = sprintf("%s/KNN_Random.csv", dir)
-write.csv(Random_KNN, file=file, row.names=F)
+file = sprintf("%s/KNN%s_Random.csv", dir, c(3, 5, 7))
+write.csv(Random_KNN3, file=file[1], row.names=F)
+write.csv(Random_KNN5, file=file[2], row.names=F)
+write.csv(Random_KNN7, file=file[3], row.names=F)
 
+main = c("STRING_700", "STRING_900", "RegNetwork")
+file = sprintf("%s/KNN5_%s_Inv.csv", dir, main)
+write.csv(STRING_700_KNN5_Inv, file=file[1], row.names=F)
+write.csv(STRING_900_KNN5_Inv, file=file[2], row.names=F)
+write.csv(RegNetwork_KNN5_Inv, file=file[3], row.names=F)
 
 col = c("Pathway1", "Pathway2")
-Edge = Reduce(rbind, list(STRING_900_KNN[, col] %>% mutate(Edge_Type="STRING_900"), 
-                          RegNetwork_KNN[, col] %>% mutate(Edge_Type="RegNetwork"), 
-                          RNA_Corr_KNN[, col] %>% mutate(Edge_Type="RNA_Corr")))
+RNA_Corr_KNN5_Inv = RNA_Corr %>% knn_graph(col_stat="Corr", mode="min", k=5)   # 960
+Edge_Inv = Reduce(rbind, list(STRING_900_KNN5_Inv[, col] %>% mutate(Edge_Type="STRING_900"), 
+                              RegNetwork_KNN5_Inv[, col] %>% mutate(Edge_Type="RegNetwork"), 
+                              RNA_Corr_KNN5_Inv[, col] %>% mutate(Edge_Type="RNA_Corr")))
 
-file = sprintf("%s/KNN_STR9_Reg_Corr.csv", dir)
-write.csv(Edge, file=file, row.names=F)
+file = sprintf("%s/KNN5_RNA_Corr_Inv.csv", dir)
+write.csv(RNA_Corr_KNN5_Inv, file=file, row.names=F)
+
+file = sprintf("%s/KNN5_STR9_Reg_Corr_Inv.csv", dir)
+write.csv(Edge_Inv, file=file, row.names=F)
 
 
 file = sprintf("%s/Pathway_Analysis.RData", dir)
 save(RegNetwork_SS, STRING_700_SS, STRING_900_SS, RNA_Corr,
-     Random_KNN, STRING_700_KNN, STRING_900_KNN, RegNetwork_KNN, RNA_Corr_KNN, file=file)
+     Random_KNN3, Random_KNN5, Random_KNN7,
+     STRING_700_KNN3, STRING_900_KNN3, RegNetwork_KNN3, RNA_Corr_KNN3, 
+     STRING_700_KNN5, STRING_900_KNN5, RegNetwork_KNN5, RNA_Corr_KNN5, 
+     STRING_700_KNN7, STRING_900_KNN7, RegNetwork_KNN7, RNA_Corr_KNN7, file=file)
+
+
+# cf. Subcategories in STRING PPI network [Physical vs Non-Physical]
+dir = "../../raw_data/STRING"
+file = sprintf("%s/9606.protein.physical.links.v11.5.txt", dir)
+STRING_Phy = fread(file)   # 1991832
+
+dir = "../../processed_data/net_data/STRING"
+file = sprintf("%s/Anno_Genes.csv", dir)
+STRING_Anno = read.csv(file)
+
+dir = "../../processed_data/cell_data/SANGER_Passports"
+file = sprintf("%s/Anno_Genes.csv", dir)
+Anno_Genes = read.csv(file)
+
+colnames(STRING_Phy) = c("Node1", "Node2", "Combined_Score")
+STRING_Phy = STRING_Phy %>% subset(Combined_Score>=900)   # 1991832 > 83896
+
+# Ensembl ID > Symbol
+idx1 = match(STRING_Phy$Node1, STRING_Anno$ENSEMBL_ID)
+idx2 = match(STRING_Phy$Node2, STRING_Anno$ENSEMBL_ID)
+
+STRING_Phy_Sym = STRING_Phy %>% 
+  mutate(Node1=STRING_Anno$SYMBOL[idx1],
+         Node2=STRING_Anno$SYMBOL[idx2])
+
+STRING_Phy_Sym = STRING_Phy_Sym[complete.cases(STRING_Phy_Sym), ]   # 83896 > 83896
+
+# Symbol > Entrez ID
+idx1 = match(STRING_Phy_Sym$Node1, Anno_Genes$HGNC_SYMBOL)
+idx2 = match(STRING_Phy_Sym$Node2, Anno_Genes$HGNC_SYMBOL)
+
+STRING_Phy_Ent = STRING_Phy_Sym %>% 
+  mutate(Node1=Anno_Genes$ENTREZ_ID[idx1] %>% as.character,
+         Node2=Anno_Genes$ENTREZ_ID[idx2] %>% as.character)
+
+STRING_Phy_Ent = STRING_Phy_Ent[complete.cases(STRING_Phy_Ent), ]   # 83896 > 80092
+
+STRING_Phy_Ent$Node1 = STRING_Phy_Ent$Node1 %>% as.numeric
+STRING_Phy_Ent$Node2 = STRING_Phy_Ent$Node2 %>% as.numeric
+STRING_Rest_Ent = setdiff(STRING_900[, 1:2], STRING_Phy_Ent[, 1:2])   # 236392 > 156678 [-79714]
+
+# STRING with physical interaction
+net_genes = unique(unlist(STRING_Phy_Ent$Node1, STRING_Phy_Ent$Node2))
+sum(unique(unlist(Path_List)) %in% net_genes)   # 1255 / 1509
+sapply(Path_List, function(x) length(intersect(x, net_genes))) %>% range   # [0, 64]
+
+STRING_Phy_SS = STRING_Phy_Ent %>% separation_score(Path_List)
+STRING_Phy_KNN5 = STRING_Phy_SS %>% knn_graph_ovl(k=5)
+
+# STRING without physical interaction
+net_genes = unique(unlist(STRING_Rest_Ent$Node1, STRING_Rest_Ent$Node2))
+sum(unique(unlist(Path_List)) %in% net_genes)   # 1449 / 1509
+sapply(Path_List, function(x) length(intersect(x, net_genes))) %>% range   # [4, 81]
+
+STRING_Rest_SS = STRING_Rest_Ent %>% separation_score(Path_List)
+STRING_Rest_KNN5 = STRING_Rest_SS %>% knn_graph_ovl(k=5)
+
+dir = "../../processed_data/net_data/BIOCARTA"
+file = sprintf("%s/KNN5_STRING_900_%s.csv", dir, c("Physical", "Rest"))
+write.csv(STRING_Phy_KNN5, file=file[1], row.names=F)
+write.csv(STRING_Rest_KNN5, file=file[2], row.names=F)
+
+col = c("Pathway1", "Pathway2")
+Edge_KNN5_Phy = Reduce(rbind, list(STRING_Phy_KNN5[, col] %>% mutate(Edge_Type="STRING_900"), 
+                                   RegNetwork_KNN5[, col] %>% mutate(Edge_Type="RegNetwork"), 
+                                   RNA_Corr_KNN5[, col] %>% mutate(Edge_Type="RNA_Corr")))
+
+Edge_KNN5_Rest = Reduce(rbind, list(STRING_Rest_KNN5[, col] %>% mutate(Edge_Type="STRING_900"), 
+                                    RegNetwork_KNN5[, col] %>% mutate(Edge_Type="RegNetwork"), 
+                                    RNA_Corr_KNN5[, col] %>% mutate(Edge_Type="RNA_Corr")))
+
+dir = "../../processed_data/net_data/BIOCARTA"
+file1 = sprintf("%s/KNN5_STR9P_Reg_Corr.csv", dir)
+file2 = sprintf("%s/KNN5_STR9R_Reg_Corr.csv", dir)
+write.csv(Edge_KNN5_Phy, file=file1, row.names=F)
+write.csv(Edge_KNN5_Rest, file=file2, row.names=F)
+
+
+
+
+# cf. Add PCN Weights
+softmax = function(x, temp=1, na_value=0) {
+  if (all(is.na(x))) {
+    x = rep(1/length(x), length(x))
+  } else {
+    x = exp(x / temp)
+    x = x / sum(x, na.rm=T)
+    x[is.na(x)] = na_value
+  }
+  return(x)
+}
+
+# RNA_Corr_KNN5 = RNA_Corr_KNN5 %>% group_by(Pathway1) %>%
+#   mutate(Weight=softmax(Corr)) %>% as.data.frame
+# RegNetwork_KNN5 = RegNetwork_KNN5 %>% group_by(Pathway1) %>%
+#   mutate(Weight=softmax(-Dist)) %>% as.data.frame
+# STRING_700_KNN5 = STRING_700_KNN5 %>% group_by(Pathway1) %>%
+#   mutate(Weight=softmax(-Dist)) %>% as.data.frame
+# STRING_900_KNN5 = STRING_900_KNN5 %>% group_by(Pathway1) %>%
+#   mutate(Weight=softmax(-Dist)) %>% as.data.frame
+# 
+# STRING_900_SS = STRING_900_SS %>% group_by(Pathway1) %>%
+#   mutate(Weight=softmax(-Dist)) %>% as.data.frame
+# 
+# net_names = c("GSVA_Corr", "RegNetwork", "STRING_700", "STRING_900")
+# main = sprintf("Histogram of Edge Weight [%s]", net_names)
+# 
+# RNA_Corr_KNN5$Weight %>% hist_def(main=main[1], save=T)
+# RegNetwork_KNN5$Weight %>% hist_def(main=main[2], save=T)
+# STRING_700_KNN5$Weight %>% hist_def(main=main[3], save=T)
+# STRING_900_KNN5$Weight %>% hist_def(main=main[4], save=T)
+# 
+# col = c("Pathway1", "Pathway2", "Weight")
+# Edge_KNN5W = Reduce(rbind, list(STRING_900_KNN5[, col] %>% mutate(Edge_Type="STRING_900"),
+#                                 RegNetwork_KNN5[, col] %>% mutate(Edge_Type="RegNetwork"),
+#                                 RNA_Corr_KNN5[, col] %>% mutate(Edge_Type="RNA_Corr")))
+
+
+col1 = c("Pathway1", "Pathway2", "Dist")
+col2 = c("Pathway1", "Pathway2", "Dist", "Ratio_Overlap")
+col3 = c("Pathway1", "Pathway2", "Corr")
+
+by = c("Pathway1"="Pathway1", "Pathway2"="Pathway2")
+merge_ = function(df1, df2) full_join(df1, df2, by=by)
+Edge_Feat = Reduce(merge_, list(STRING_900_SS[, col1], RegNetwork_SS[, col2], RNA_Corr[, col3]))
+
+Edge_Feat = Edge_Feat %>% 
+  mutate(Weight_STR9=-Dist.x, Weight_Reg=-Dist.y, 
+         Weight_Corr=Corr, Weight_OVL=Ratio_Overlap) %>% 
+  subset(select=-c(Dist.x, Dist.y, Corr, Ratio_Overlap)) %>% as.data.frame
+
+Edge_Feat$Weight_STR9 %>% is.na %>% sum   # 0
+Edge_Feat$Weight_Reg %>% is.na %>% sum    # 30450
+Edge_Feat$Weight_Corr %>% is.na %>% sum   # 0
+Edge_Feat$Weight_OVL %>% is.na %>% sum    # 0
+
+Edge_Feat$Weight_STR9 %>% range(na.rm=T) %>% round(3)   # -3.164 -0.006
+Edge_Feat$Weight_Reg %>% range(na.rm=T) %>% round(3)    # -3.017  0.342
+Edge_Feat$Weight_Corr %>% range(na.rm=T) %>% round(3)   # -0.672  0.969
+Edge_Feat$Weight_OVL %>% range(na.rm=T) %>% round(3)    # 0.000 0.846
+
+Edge_Feat$Weight_Reg[is.na(Edge_Feat$Weight_Reg)] = min(Edge_Feat$Weight_Reg, na.rm=T)
+
+col = c("Pathway1", "Pathway2")
+Edge_KNN5 = Reduce(rbind, list(STRING_900_KNN5[, col] %>% mutate(Edge_Type="STRING_900"),
+                               RegNetwork_KNN5[, col] %>% mutate(Edge_Type="RegNetwork"),
+                               RNA_Corr_KNN5[, col] %>% mutate(Edge_Type="RNA_Corr")))
+
+by = c("Pathway1"="Pathway1", "Pathway2"="Pathway2")
+Edge_KNN5W_Plus = left_join(Edge_KNN5, Edge_Feat, by=by)
+
+Edge_KNN5W_Plus$Weight_STR9 %>% range(na.rm=T) %>% round(3)   # -2.715 -0.006
+Edge_KNN5W_Plus$Weight_Reg %>% range(na.rm=T) %>% round(3)    # -3.017  0.342
+Edge_KNN5W_Plus$Weight_Corr %>% range(na.rm=T) %>% round(3)   # -0.634  0.969
+Edge_KNN5W_Plus$Weight_OVL %>% range(na.rm=T) %>% round(3)    # 0.000 0.846
+
+Edge_KNN5W_Plus$Weight_STR9 %>% hist_def(main="W_STR9", save=T)
+Edge_KNN5W_Plus$Weight_Reg %>% hist_def(main="W_Reg", save=T)
+Edge_KNN5W_Plus$Weight_Corr %>% hist_def(main="W_Corr", save=T)
+Edge_KNN5W_Plus$Weight_OVL %>% hist_def(main="W_OVL", save=T)
+
+
+robust_scaler = function(x) (x-median(x)) / IQR(x)
+
+Edge_Feat_ = Edge_Feat
+Edge_Feat_$Weight_STR9 = Edge_Feat_$Weight_STR9 %>% robust_scaler
+Edge_Feat_$Weight_Reg = Edge_Feat_$Weight_Reg %>% robust_scaler
+Edge_KNN5W_Plus_ = left_join(Edge_KNN5, Edge_Feat_, by=by)
+
+Edge_KNN5W_Plus_$Weight_STR9 %>% range(na.rm=T) %>% round(3)   # -2.933  1.256
+Edge_KNN5W_Plus_$Weight_Reg %>% range(na.rm=T) %>% round(3)    # -0.783  0.533
+Edge_KNN5W_Plus_$Weight_Corr %>% range(na.rm=T) %>% round(3)   # -0.634  0.969
+Edge_KNN5W_Plus_$Weight_OVL %>% range(na.rm=T) %>% round(3)    # 0.000 0.846
+
+Edge_KNN5W_Plus$Weight_STR9 %>% hist_def(main="W_STR9", save=T)
+Edge_KNN5W_Plus$Weight_Reg %>% hist_def(main="W_Reg", save=T)
+Edge_KNN5W_Plus$Weight_Corr %>% hist_def(main="W_Corr", save=T)
+Edge_KNN5W_Plus$Weight_OVL %>% hist_def(main="W_OVL", save=T)
+
+Edge_KNN5W_Plus_$Weight_STR9 %>% hist_def(main="W_STR9_Scaled", save=T)
+Edge_KNN5W_Plus_$Weight_Reg %>% hist_def(main="W_Reg_Scaled", save=T)
+
+
+
+dir = "../../processed_data/net_data/BIOCARTA"
+
+# file = sprintf("%s/RNA_Corr_KNN%s+.csv", dir, c(3, 5, 7))
+# write.csv(RNA_Corr_KNN3, file=file[1], row.names=F)
+# write.csv(RNA_Corr_KNN5, file=file[2], row.names=F)
+# write.csv(RNA_Corr_KNN7, file=file[3], row.names=F)
+
+# file = sprintf("%s/KNN%s_STRING_700+.csv", dir, c(3, 5, 7))
+# write.csv(STRING_700_KNN3, file=file[1], row.names=F)
+# write.csv(STRING_700_KNN5, file=file[2], row.names=F)
+# write.csv(STRING_700_KNN7, file=file[3], row.names=F)
+
+# file = sprintf("%s/KNN%s_STRING_900+.csv", dir, c(3, 5, 7))
+# write.csv(STRING_900_KNN3, file=file[1], row.names=F)
+# write.csv(STRING_900_KNN5, file=file[2], row.names=F)
+# write.csv(STRING_900_KNN7, file=file[3], row.names=F)
+
+# file = sprintf("%s/KNN%s_RegNetwork+.csv", dir, c(3, 5, 7))
+# write.csv(RegNetwork_KNN3, file=file[1], row.names=F)
+# write.csv(RegNetwork_KNN5, file=file[2], row.names=F)
+# write.csv(RegNetwork_KNN7, file=file[3], row.names=F)
+
+file = sprintf("%s/KNN%s_STR9_Reg_Corr+.csv", dir, c(3, 5, 7))
+# write.csv(Edge_KNN3, file=file[1], row.names=F)
+write.csv(Edge_KNN5W, file=file[2], row.names=F)
+# write.csv(Edge_KNN7, file=file[3], row.names=F)
+
+file = sprintf("%s/KNN%s_STR9_Reg_Corr+1.csv", dir, c(3, 5, 7))
+# write.csv(Edge_KNN3W_Plus, file=file[1], row.names=F)
+write.csv(Edge_KNN5W_Plus, file=file[2], row.names=F)
+# write.csv(Edge_KNN7W_Plus, file=file[3], row.names=F)
+
+file = sprintf("%s/KNN%s_STR9_Reg_Corr+2.csv", dir, c(3, 5, 7))
+# write.csv(Edge_KNN3W_Plus_, file=file[1], row.names=F)
+write.csv(Edge_KNN5W_Plus_, file=file[2], row.names=F)
+# write.csv(Edge_KNN7W_Plus_, file=file[3], row.names=F)
+
+
 
 
 supplementary = T
@@ -1446,26 +1259,30 @@ if (supplementary) {
            Dist_Pathway12=Dist_P1_P2, Num_Genes_Pathway1=Num1, Num_Genes_Pathway2=Num2, 
            Num_Genes_Overlap=Num_Overlap, Ratio_Genes_Overlap=Ratio_Overlap)
   
-  KNN_Sim_ = KNN_Sim %>% rename(Network_X=Net1, Network_Y=Net2)
-  PPA_Info_ = list(STRING_700_SS_, STRING_900_SS_, RegNetwork_SS_, KNN_Sim_)
+  KNN5_Sim_ = KNN5_Sim %>% rename(Network_X=Net1, Network_Y=Net2)
+  PPA_Info_ = list(STRING_700_SS_, STRING_900_SS_, RegNetwork_SS_, KNN5_Sim_)
   PPA_Info_ %>% save_for_nc(num=1, suppl=T)
   
   
   ### [Source Data] Supplementary Fig. 2
-  STRING_700_KNN_ = STRING_700_KNN %>% 
+  STRING_700_KNN5_ = STRING_700_KNN5 %>% 
     subset(select=c(Pathway1, Pathway2, Dist, Ratio_Overlap)) %>% 
     rename(Separation_Score=Dist, Ratio_Genes_Overlap=Ratio_Overlap)
   
-  STRING_900_KNN_ = STRING_900_KNN %>% 
+  STRING_900_KNN5_ = STRING_900_KNN5 %>% 
     subset(select=c(Pathway1, Pathway2, Dist, Ratio_Overlap)) %>% 
     rename(Separation_Score=Dist, Ratio_Genes_Overlap=Ratio_Overlap)
   
-  RegNetwork_KNN_ = RegNetwork_KNN %>% 
+  RegNetwork_KNN5_ = RegNetwork_KNN5 %>% 
     subset(select=c(Pathway1, Pathway2, Dist, Ratio_Overlap)) %>% 
     rename(Separation_Score=Dist, Ratio_Genes_Overlap=Ratio_Overlap)
   
-  KNN_List_ = list(STRING_700_KNN_, STRING_900_KNN_, RegNetwork_KNN_, RNA_Corr_KNN)
-  KNN_List_ %>% save_for_nc(num=2, suppl=T)
+  KNN5_List_ = list(STRING_700_KNN5_, STRING_900_KNN5_, RegNetwork_KNN5_, RNA_Corr_KNN5)
+  KNN5_List_ %>% save_for_nc(num=2, suppl=T)
+  
+  
+  ### [Source Data] Supplementary Fig. 32
+  Corr_List %>% save_for_nc(num=32, suppl=T)
   
   
   ### [Source Data] Fig. 5
@@ -1484,9 +1301,5 @@ if (supplementary) {
   
   
   ### [Supplementary Data] Supplementary Data 2
-  Edge = Edge %>% mutate(Edge_Type=ifelse(Edge_Type=="RNA_Corr", "GSVA_Correlation", Edge_Type))
   
-  sheets = "Supplementary Data 2"
-  file = sprintf("%s.xlsx", sheets)
-  write.xlsx(Edge, file=file, sheetName=sheets, rowNames=F)
 }

@@ -7,143 +7,10 @@ suppressMessages(library(openxlsx))
 suppressMessages(library(reshape2))
 
 source("../functions.R")
+source("functions.R")
 loadings()
 
 options(dplyr.summarise.inform=F)
-
-read_pred = function(dir, pattern, sep=",", seed=F) {
-  Pred = data.frame()
-  df_name_list = list.files(path=dir, pattern=pattern, full.names=T)
-  # [pattern] "Pred_.*([0-9]+$)\\.csv", "Pred_CCLE_.*([0-9]+)\\.csv"
-  
-  if (length(df_name_list)!=0) {
-    for (df_name in df_name_list) {
-      Pred_TP = fread(df_name, header=T, sep=sep)
-      df_name_ = strsplit(df_name, "/")[[1]] %>% tail(1)
-      fold_nth = gsub(pattern, "\\1", df_name_) %>% as.numeric
-      Pred_TP$Fold = fold_nth
-      
-      if (seed) {
-        seed_nth = strsplit(df_name, "/")[[1]] %>% tail(2) %>% head(1)
-        seed_nth = gsub("Seed", "", seed_nth) %>% as.numeric
-        Pred_TP$Seed = seed_nth
-      }
-      Pred = Pred %>% rbind(Pred_TP)
-    }
-    return(Pred)
-  }
-}
-
-calc_perf = function(Pred, option=0, dataset=NULL, test_type=NULL, seed=F) {
-  
-  if (option==0) {
-    col_by = "Fold"
-  } else if (option==1) {
-    col_by = c("Model", "Cell", "Dataset", "Test_Type")
-  } else if (option==2) {
-    col_by = c("Model", "Drug", "Dataset", "Test_Type")
-  }
-  
-  if (seed) col_by = col_by %>% c("Seed")
-  pred_inf = Pred$Prediction %>% is.infinite
-  if (any(pred_inf)) {
-    fold_inf = Pred[pred_inf, "Fold"] %>% 
-      unique %>% unlist %>% sort %>% paste(collapse=" & ")
-    
-    Pred_Inf = Pred[pred_inf, ]
-    Pred = Pred[!pred_inf, ]
-    
-    if (option==0) {
-      text = sprintf("%s x %s", dataset, test_type)
-      sprintf("Prediction Inf found in %s... [n=%s in Fold %s]", 
-              text, sum(pred_inf), fold_inf) %>% print
-    } else {
-      sprintf("Prediction Inf found... [n=%s in Fold %s]", 
-              sum(pred_inf), fold_inf) %>% print
-    }
-  }
-  
-  Perf = Pred %>% 
-    group_by(across(all_of(col_by))) %>% 
-    summarize(N_Test = n(),
-              RMSE = RMSE(LN_IC50, Prediction),
-              PCC = cor(LN_IC50, Prediction), 
-              SCC = cor(LN_IC50, Prediction, method="spearman"))
-  
-  if (any(pred_inf)) {
-    Perf_Inf = Pred_Inf %>% 
-      group_by(across(all_of(col_by))) %>% 
-      summarize(N_Test = n(), RMSE = NA, PCC = NA, SCC = NA)
-    
-    # Function distinct drop duplicatee rows except first one given a certain columns
-    Perf = rbind(Perf, Perf_Inf) %>% as.data.frame %>% 
-      distinct(across(all_of(col_by)), .keep_all=T) %>% as.data.frame
-    if (option==0) Perf = Perf %>% arrange(Fold) %>% as.data.frame
-  } else {
-    Perf = Perf %>% as.data.frame
-  }
-  return(Perf)
-}
-
-read_pred_all = function(dir_list, model_name, pattern, sep=",", seed=F) {
-  
-  Pred = data.frame()
-  Perf = data.frame()
-  
-  for (dir in dir_list) {
-    Pred_TP = read_pred(dir, pattern, sep=sep, seed=seed)
-    if (!is.null(Pred_TP)) {
-      dir_detail = strsplit(dir, "/") %>% unlist
-      
-      if ("IC50_GDSC" %in% dir_detail) {
-        dataset = "GDSC"
-      } else if ("IC50_GDSC1" %in% dir_detail) {
-        dataset = "GDSC1"
-      } else if ("IC50_GDSC2" %in% dir_detail) {
-        dataset = "GDSC2"
-      } else if ("IC50_CCLE" %in% dir_detail) {
-        dataset = "CCLE"
-      } else print("Error!!!")
-      
-      if ("Normal" %in% dir_detail) {
-        test_type = "Normal"
-      } else if ("Cell_Blind" %in% dir_detail) {
-        test_type = "Cell_Blind"
-      } else if ("Drug_Blind" %in% dir_detail) {
-        test_type = "Drug_Blind"
-      } else if ("Strict_Blind" %in% dir_detail) {
-        test_type = "Strict_Blind"
-      } else print("Error!!!")
-      
-      Perf_TP = Pred_TP %>% calc_perf(option=0, dataset, test_type, seed=seed)
-      Perf_TP$Model = model_name
-      Perf_TP$Dataset = dataset
-      Perf_TP$Test_Type = test_type
-      Perf_TP = Perf_TP %>% relocate(Model, Dataset, Test_Type, Fold, N_Test, .before=everything())
-      Perf = Perf %>% rbind(Perf_TP)
-      
-      Pred_TP$Model = model_name
-      Pred_TP$Dataset = dataset
-      Pred_TP$Test_Type = test_type
-      Pred_TP = Pred_TP %>% relocate(Model, Dataset, Test_Type, Fold, .before=everything())
-      Pred = Pred %>% rbind(Pred_TP)
-    }
-  }
-  
-  Perf_Cell = Pred %>% calc_perf(option=1, seed=seed)
-  Perf_Drug = Pred %>% calc_perf(option=2, seed=seed)
-  
-  if (seed) {
-    Pred$Model = Pred %>% with(sprintf("%s_Seed%s", Model, Seed))
-    Perf$Model = Perf %>% with(sprintf("%s_Seed%s", Model, Seed))
-    Perf_Cell$Model = Perf_Cell %>% with(sprintf("%s_Seed%s", Model, Seed))
-    Perf_Drug$Model = Perf_Drug %>% with(sprintf("%s_Seed%s", Model, Seed))
-  }
-  
-  Pred = list(Pred=Pred, Perf=Perf, Perf_Cell=Perf_Cell, Perf_Drug=Perf_Drug)
-  sprintf("# The number of Test : %s", nrow(Perf)) %>% print
-  return(Pred)
-}
 
 
 
@@ -163,6 +30,17 @@ Dir_List = expand.grid(dir1, dir2)
 dir_list = Dir_List %>% apply(1, function(x) paste0(x, collapse="/"))
 
 pattern = "pred_test_([0-9]+).csv"
+
+
+# BMTMKL [O]
+dir = "../BMTMKL/Results"
+dir_list_ = sprintf("%s/%s", dir, dir_list)
+Pred_BMTMKL = read_pred_all(dir_list_, "BMTMKL", pattern)
+
+# RF [O]
+dir = "../RF/Results"
+dir_list_ = sprintf("%s/%s", dir, dir_list)
+Pred_RF = read_pred_all(dir_list_, "RF", pattern)
 
 # tCNNS [O]
 dir = "../tCNNS/Results"
@@ -244,48 +122,21 @@ cells_tgsa = Pred_TGSA$Perf_Cell$Cell %>% unique           # 700
 cells_paccmann = Pred_PaccMann$Perf_Cell$Cell %>% unique   # 395
 cells_graphdrp = Pred_GraphDRP$Perf_Cell$Cell %>% unique   # 969
 cells_hidra = Pred_HiDRA$Perf_Cell$Cell %>% unique         # 947
+cells_rf = Pred_RF$Perf_Cell$Cell %>% unique               # 972
+cells_bmtmkl = Pred_BMTMKL$Perf_Cell$Cell %>% unique       # 808
 
 all(cells_drpreter %in% cells_sanger)   # T
 all(cells_tgsa %in% cells_sanger)       # T
 all(cells_paccmann %in% cells_sanger)   # F [394/395]
 all(cells_graphdrp %in% cells_sanger)   # F [964/969]
 all(cells_hidra %in% cells_sanger)      # F [944/947]
+all(cells_rf %in% cells_sanger)         # T
 
 
 
 ##### 3-1. Compare Performances [Overall]
 
-perf_avg_sd = function(Perf_Fold, stat="RMSE", space_cols=F) {
-  
-  object = function(x, envir=NULL) {
-    if (is.null(envir)) envir=parent.frame()
-    eval(parse(text=x), envir=envir)
-  }
-  
-  avg_plus_sd = function(x_mean, x_sd) sprintf("%.3f±%.3f", x_mean, x_sd)
-  Perf_Fold = Perf_Fold %>% subset(!is.na(object(stat)))
-  Perf_Fold_Avg = Perf_Fold %>% reshape2::acast(Model~Test, value.var=stat, fun.aggregate=mean)
-  Perf_Fold_SD = Perf_Fold %>% reshape2::acast(Model~Test, value.var=stat, fun.aggregate=sd)
-  
-  Perf_Fold_Avg = Perf_Fold_Avg %>% as.data.frame
-  Perf_Fold_SD = Perf_Fold_SD %>% as.data.frame
-  Perf_Fold_Sum = mapply(avg_plus_sd, Perf_Fold_Avg, Perf_Fold_SD)
-  if (space_cols) colnames(Perf_Fold_Sum) = gsub(" x ", "\n", colnames(Perf_Fold_Sum))
-  
-  Perf_Fold_Sum = Perf_Fold_Sum %>% as.data.frame
-  rownames(Perf_Fold_Sum) = rownames(Perf_Fold_Avg)
-  return(Perf_Fold_Sum)
-}
-
-rbind_perf = function(Perf1, Perf2, col=NULL) {
-  if (is.null(col)) col = intersect(colnames(Perf1), colnames(Perf2))
-  if (is.data.table(Perf1) & is.data.table(Perf2)) {
-    Perf = rbind(Perf1[, col, with=F], Perf2[, col, with=F])
-  } else Perf = rbind(Perf1[, col], Perf2[, col])
-  return(Perf)
-}
-
-model_names = c("tCNNS", "HiDRA", "PaccMann", "PaccMann_SG",
+model_names = c("BMTMKL", "RF", "tCNNS", "HiDRA", "PaccMann", "PaccMann_SG",
                 "GraphDRP", "TGDRP", "TGSA", "TGDRP_SG", "TGSA_SG",
                 "DRPreter", "DRPreter_SA", "DRPreter_SG", "DRPreter_SA_SG", "GCNPath")
 
@@ -293,7 +144,7 @@ Perf_List = list()
 pred_names = sprintf("Pred_%s", model_names)
 
 for (i in 1:length(model_names)) Perf_List[[i]] = get(pred_names[i])$Perf
-Perf_List = Reduce(rbind_perf, Perf_List)   # 2310 x 11
+Perf_List = Reduce(rbind_perf, Perf_List)   # 2475 x 11
 
 dataset = c("GDSC", "GDSC1", "GDSC2")
 test_type = c("Normal", "Cell_Blind", "Drug_Blind", "Strict_Blind")
@@ -357,48 +208,69 @@ write.xlsx(df_list, file=file, rowNames=T, sheetName=sheet)
 save_pred = T
 if (save_pred) {
   Pred_List = list()
-  for (i in 1:length(model_names)) Pred_List[[i]] = get(pred_names[i])$Pred
-  Pred_List = Reduce(rbind_perf, Pred_List)   # 40848552 x 8
-  Pred_List = Pred_List %>% rename(Train_Fold=Fold)
+  for (i in 1:length(model_names)) {
+    Pred_List[[i]] = get(pred_names[i])$Pred[Dataset=="GDSC"]
+    setkey(Pred_List[[i]], Test_Type, Cell, Drug)
+  }
+  names(Pred_List) = model_names
   
-  Pred_List_ = rbind(Pred_tCNNS$Pred, Pred_GraphDRP$Pred)
-  Pred_List_ = Pred_List_ %>% rename(Train_Fold=Fold) %>% 
-    subset(select=-c(Cell_BROAD, Cell_COSMIC))
+  dir = "../GCNPath/data/ic50_data"
+  file = sprintf("%s/IC50_GDSC.txt", dir)
+  IC50_GDSC_ = fread(file, sep="\t")
   
-  file = "Prediction [GDSC].csv"
-  fwrite(Pred_List, file=file, row.names=F)
+  setkey(IC50_GDSC_, Cell, Drug)
+  IC50_GDSC_ = IC50_GDSC_[, .(Cell, Drug, LN_IC50)]
   
-  file = "Prediction [GDSC (tCNNS, GraphDRP)].csv"
-  fwrite(Pred_List_, file=file, row.names=F)
+  pred_to_wide = function(models, test_type, IC50_GDSC=NULL) {
+    long_dt <- rbindlist(
+      lapply(models, function(model) {
+        dt <- Pred_List[[model]][.(test_type), .(Cell, Drug, Prediction)]
+        dt[, Model := model]
+        dt
+      }), use.names = T
+    )
+    
+    setkey(long_dt, Cell, Drug)
+    long_dt = dcast(
+      long_dt,
+      Cell + Drug ~ Model,
+      value.var = "Prediction"
+    )
+    
+    setcolorder(long_dt, c("Cell", "Drug", models))
+    if (!is.null(IC50_GDSC)) {
+      long_dt = IC50_GDSC[long_dt]
+    }
+    
+    return(long_dt)
+  }
   
-  rm(Pred_List, Pred_List_)
-  gc()
+  model_names_ = model_names %>% setdiff("BMTMKL")
+  Pred_U = pred_to_wide(model_names, test_type[1], IC50_GDSC_)
+  Pred_C = pred_to_wide(model_names, test_type[2], IC50_GDSC_)
+  Pred_D = pred_to_wide(model_names_, test_type[3], IC50_GDSC_)
+  Pred_S = pred_to_wide(model_names_, test_type[4], IC50_GDSC_)
+  
+  # Pred_List = Reduce(rbind_perf, Pred_List)   # 40848552 x 8
+  # Pred_List = Pred_List %>% rename(Train_Fold=Fold)
+  # 
+  # Pred_List_ = rbind(Pred_tCNNS$Pred, Pred_GraphDRP$Pred)
+  # Pred_List_ = Pred_List_ %>% rename(Train_Fold=Fold) %>% 
+  #   subset(select=-c(Cell_BROAD, Cell_COSMIC))
+  # 
+  # file = "Prediction [GDSC].csv"
+  # fwrite(Pred_List, file=file, row.names=F)
+  # 
+  # file = "Prediction [GDSC (tCNNS, GraphDRP)].csv"
+  # fwrite(Pred_List_, file=file, row.names=F)
+  # 
+  # rm(Pred_List, Pred_List_)
+  # gc()
 }
 
 
 # Scatter plots of prediction-actual ln(IC50) values
 # Be careful that it takes too much times to draw all figures...
-
-plot_pred = function(Pred, model=NULL, test_type="Normal", dir=NULL, 
-                     width=15, height=15, return_info=T) {
-  
-  xlab = bquote(Actual~ln(IC[50]))
-  ylab = bquote(Predicted~ln(IC[50]))
-  main = sprintf("%s/Prediction [%s, %s]", dir, model, test_type)
-  
-  Pred_ = Pred %>% subset(!is.na(Prediction) & !is.infinite(Prediction))
-  rmse = Pred_ %>% with(RMSE(LN_IC50, Prediction)) %>% round(3)
-  corr = Pred_ %>% with(cor(LN_IC50, Prediction)) %>% round(3)
-  info = c(nrow(Pred), rmse, corr)
-  sprintf("# N=%s, RMSE=%.3f, PCC=%.3f", info[1], info[2], info[3]) %>% print
-  if (nrow(Pred_)!=0) sprintf("# Inf found... [%s, n=%s]", model, nrow(Pred)-nrow(Pred_)) %>% print
-  
-  Pred_ %>% plot_def(LN_IC50, Prediction, main=main, xlab=xlab, ylab=ylab,
-                     size=1.5, alpha=0.25, axis_tl=30, axis_tx=24, dpi=1200,
-                     width=width, height=height, xy_line=T, raster=T, save=T, save_svg=T)
-  
-  if (return_info) return(info)
-}
 
 draw_pred = T
 if (draw_pred) {
@@ -445,177 +317,6 @@ if (draw_pred) {
 
 # Statistic Analysis per Dataset & Test-Type
 # Non-parametric U-Test [Mann-Whitney]
-
-wilcox_test_sub = function(Perf_List, model_h1, model_h0, dataset=NULL, test_type=NULL) {
-  
-  if (!is.null(dataset)) Perf_List = Perf_List %>% subset(Dataset %in% dataset)
-  if (!is.null(test_type)) Perf_List = Perf_List %>% subset(Test_Type %in% test_type)
-  Perf_Model_H1 = Perf_List %>% subset(Model==model_h1)
-  Perf_Model_H0 = Perf_List %>% subset(Model==model_h0)
-  
-  utest_rmse = wilcox.test(Perf_Model_H1$RMSE, Perf_Model_H0$RMSE, alternative="less")
-  utest_pcc = wilcox.test(Perf_Model_H1$PCC, Perf_Model_H0$PCC, alternative="greater")
-  utest_scc = wilcox.test(Perf_Model_H1$SCC, Perf_Model_H0$SCC, alternative="greater")
-  dataset = ifelse(!is.null(dataset), dataset, "Total")
-  test_type = ifelse(!is.null(test_type), test_type, "Total")
-  
-  utest_res = c(model_h0, model_h1, dataset, test_type, 
-                utest_rmse$alternative, utest_pcc$alternative, utest_scc$alternative, 
-                utest_rmse$statistic, utest_pcc$statistic, utest_scc$statistic,
-                utest_rmse$p.value, utest_pcc$p.value, utest_scc$p.value)
-  
-  return(utest_res)
-}
-
-wilcox_test = function(Perf_List, fdr_adjust=T) {
-  
-  Test_Res = data.frame()
-  dataset = c("GDSC", "GDSC1", "GDSC2")
-  test_type = c("Normal", "Cell_Blind", "Drug_Blind", "Strict_Blind")
-  
-  model_list = Perf_List$Model %>% unique
-  Model_Pair = expand.grid(Model_H1=model_list, Model_H0=model_list)
-  Model_Pair = Model_Pair %>% subset(Model_H1!=Model_H0)
-  
-  for (i in 1:nrow(Model_Pair)) {
-    model_h1 = Model_Pair$Model_H1[i] %>% as.character
-    model_h0 = Model_Pair$Model_H0[i] %>% as.character
-    
-    for (dataset_ in dataset) {
-      for (test_type_ in test_type) {
-        test_res = wilcox_test_sub(Perf_List, model_h1, model_h0, dataset=dataset_, test_type=test_type_)
-        Test_Res = Test_Res %>% rbind(test_res)
-      }
-    }
-    
-    for (test_type_ in test_type) {
-      test_res = wilcox_test_sub(Perf_List, model_h1, model_h0, test_type=test_type_)
-      Test_Res = Test_Res %>% rbind(test_res)
-    }
-    
-    for (dataset_ in dataset) {
-      test_res = wilcox_test_sub(Perf_List, model_h1, model_h0, dataset=dataset_)
-      Test_Res = Test_Res %>% rbind(test_res)
-    }
-    
-    test_res = wilcox_test_sub(Perf_List, model_h1, model_h0)
-    Test_Res = Test_Res %>% rbind(test_res)
-  }
-  
-  colnames(Test_Res) = c("Model_H0", "Model_H1", "Dataset", "Test_Type", 
-                         "Hypothesis_RMSE", "Hypothesis_PCC", "Hypothesis_SCC", 
-                         "W_RMSE", "W_PCC", "W_SCC", "Pval_RMSE", "Pval_PCC", "Pval_SCC")
-  
-  Test_Res[, 8:13] = Test_Res[, 8:13] %>% sapply(as.numeric)
-  fdr_adj = function(x) p.adjust(x, "fdr")
-  mlog10 = function(x) -log10(x)
-  signif = function(x) x<0.05
-  
-  metrics = c("RMSE", "SCC", "PCC")
-  col_fdr = sprintf("FDR_%s", metrics)
-  col_pval = sprintf("Pval_%s", metrics)
-  
-  if (fdr_adjust) {
-    Test_Res = Test_Res %>% 
-      group_by(Dataset, Test_Type) %>%
-      mutate(across(all_of(col_pval), fdr_adj, .names="{sub('Pval', 'FDR', col)}")) %>%
-      mutate(across(all_of(col_fdr), mlog10, .names = "MLog10_{col}")) %>%
-      mutate(across(all_of(col_fdr), signif, .names = "Signif_{col}"))
-  } else {
-    Test_Res = Test_Res %>% 
-      mutate(across(all_of(col_pval), mlog10, .names = "MLog10_{col}")) %>%
-      mutate(across(all_of(col_pval), signif, .names = "Signif_{col}"))
-  }
-  
-  Test_Res = Test_Res %>% as.data.frame
-  return(Test_Res)
-}
-
-wilcox_model_grid = function(Perf_UTest, fdr_adjust=T, models=NULL, main=NULL, lvl_model=NULL,
-                             axis_tx=18, legend_tl=16, legend_tx=16, size=4.2, angle=36,
-                             axis_face="plain", legend_face="plain", text_face="plain", 
-                             round=2, width=30.6, height=24, asterisk=T, save=F) {
-  
-  if (!is.null(models)) {
-    Perf_UTest = Perf_UTest %>% 
-      subset(Model_H0 %in% models & Model_H1 %in% models)
-  }
-  
-  if (!is.null(lvl_model)) {
-    Perf_UTest = Perf_UTest %>% 
-      mutate(Model_H0=factor(Model_H0, levels=lvl_model), 
-             Model_H1=factor(Model_H1, levels=lvl_model))
-  }
-  
-  if (fdr_adjust) {
-    legend1 = bquote(atop("-Log"["10"](FDR), p(RMSE["y"]<RMSE["x"])))
-    legend2 = bquote(atop("-Log"["10"](FDR), p(PCC["y"]>PCC["x"])))
-    legend3 = bquote(atop("-Log"["10"](FDR), p(SCC["y"]>SCC["x"])))
-    
-    Perf_UTest = Perf_UTest %>% 
-      mutate(Pval_RMSE_Log=-log(FDR_RMSE, 10), 
-             Pval_PCC_Log=-log(FDR_PCC, 10), 
-             Pval_SCC_Log=-log(FDR_SCC, 10))
-  } else {
-    legend1 = bquote(atop("-Log"["10"](Pval), p(RMSE["y"]<RMSE["x"])))
-    legend2 = bquote(atop("-Log"["10"](Pval), p(PCC["y"]>PCC["x"])))
-    legend3 = bquote(atop("-Log"["10"](Pval), p(SCC["y"]>SCC["x"])))
-    
-    Perf_UTest = Perf_UTest %>% 
-      mutate(Pval_RMSE_Log=-log(Pval_RMSE, 10), 
-             Pval_PCC_Log=-log(Pval_PCC, 10), 
-             Pval_SCC_Log=-log(Pval_SCC, 10))
-  }
-  
-  if (asterisk) {
-    if (fdr_adjust) {
-      idx1 = Perf_UTest$FDR_RMSE<0.05
-      idx2 = Perf_UTest$FDR_PCC<0.05
-      idx3 = Perf_UTest$FDR_SCC<0.05
-    } else {
-      idx1 = Perf_UTest$Pval_RMSE<0.05
-      idx2 = Perf_UTest$Pval_PCC<0.05
-      idx3 = Perf_UTest$Pval_SCC<0.05
-    }
-    
-    Perf_UTest = Perf_UTest %>% 
-      mutate(Pval_RMSE_Log_=round(Pval_RMSE_Log, round), 
-             Pval_PCC_Log_=round(Pval_PCC_Log, round), 
-             Pval_SCC_Log_=round(Pval_SCC_Log, round))
-    
-    Perf_UTest$Pval_RMSE_Log_[idx1] = paste0(Perf_UTest$Pval_RMSE_Log_[idx1], "*")
-    Perf_UTest$Pval_PCC_Log_[idx2] = paste0(Perf_UTest$Pval_PCC_Log_[idx2], "*")
-    Perf_UTest$Pval_SCC_Log_[idx3] = paste0(Perf_UTest$Pval_SCC_Log_[idx3], "*")
-    
-    label1 = aes(label=Pval_RMSE_Log_)
-    label2 = aes(label=Pval_PCC_Log_)
-    label3 = aes(label=Pval_SCC_Log_)
-  }
-  
-  Perf_UTest = Perf_UTest %>% as.data.frame
-  color = scale_fill_gradient(low="white", high="firebrick3")
-  add = list(theme(legend.key.width=unit(0.8, "cm"), 
-                   legend.key.height=unit(1, "cm")))
-  
-  Perf_UTest %>% grid_def(Model_H0, Model_H1, fill=Pval_RMSE_Log, main=main[1], color=color,
-                          legend=legend1, label=label1, round=round, size=size, angle=angle,
-                          axis_tx=axis_tx, legend_tl=legend_tl, legend_tx=legend_tx, margin_lg=0.5,
-                          axis_face=axis_face, legend_face=legend_face, text_face=text_face,
-                          add=add, width=width+1.2, height=height, mean_summary=F, save=save)
-  
-  Perf_UTest %>% grid_def(Model_H0, Model_H1, fill=Pval_PCC_Log, main=main[2], color=color,
-                          legend=legend2, label=label2, round=round, size=size, angle=angle,
-                          axis_tx=axis_tx, legend_tl=legend_tl, legend_tx=legend_tx, margin_lg=0.5,
-                          axis_face=axis_face, legend_face=legend_face, text_face=text_face,
-                          add=add, width=width+0.5, height=height, mean_summary=F, save=save)
-  
-  Perf_UTest %>% grid_def(Model_H0, Model_H1, fill=Pval_SCC_Log, main=main[3], color=color,
-                          legend=legend3, label=label3, round=round, size=size, angle=angle,
-                          axis_tx=axis_tx, legend_tl=legend_tl, legend_tx=legend_tx, margin_lg=0.5,
-                          axis_face=axis_face, legend_face=legend_face, text_face=text_face,
-                          add=add, width=width+0.5, height=height, mean_summary=F, save=save)
-}
-
 Perf_UTest = Perf_List %>% wilcox_test(fdr_adjust=T)
 
 # Confirmation of FDR adjust p.val
@@ -641,131 +342,11 @@ main2 = sprintf("%s/%s Wilcox of Models [GDSC, %s]", dir, metrics, test_type_[2]
 main3 = sprintf("%s/%s Wilcox of Models [GDSC, %s]", dir, metrics, test_type_[3])
 main4 = sprintf("%s/%s Wilcox of Models [GDSC, %s]", dir, metrics, test_type_[4])
 
+model_names_ = setdiff(model_names, "BMTMKL")
 Perf_UTest_N %>% wilcox_model_grid(models=model_names, lvl_model=model_names, main=main1, save=T)
 Perf_UTest_C %>% wilcox_model_grid(models=model_names, lvl_model=model_names, main=main2, save=T)
-Perf_UTest_D %>% wilcox_model_grid(models=model_names, lvl_model=model_names, main=main3, save=T)
-Perf_UTest_S %>% wilcox_model_grid(models=model_names, lvl_model=model_names, main=main4, save=T)
-
-plot_perf = function(Perf_List, score="RMSE", test_type="Normal", 
-                     dir=NULL, axis_tl=36, axis_tx=24, legend_tl=25, legend_tx=25, alpha=0.9, 
-                     margin=0.6, margin_lg=0.5, pos_dodge=0.75, width=36, height=22.5, save=F) {
-  
-  # [score] RMSE, PCC, SCC
-  pos = position_dodge(pos_dodge)
-  test_type_ = gsub("_", "-", test_type)
-  if (test_type_=="Normal") test_type_ = "Unblinded"
-  ylab = sprintf("%s [%s Test]", score, test_type_)
-  file = sprintf("%s/Performances [%s, %s]", dir, score, test_type_)
-  
-  Perf_List = Perf_List %>% subset(Test_Type==test_type)
-  color = RColorBrewer::brewer.pal(8, "Reds")[c(8, 6, 2)]
-  # add = list(scale_fill_brewer(palette="Reds"))
-  # add = list(scale_fill_manual(values=c("#610000", "#ff1e1e", "#feb9b9")))
-  
-  theme_lg = theme(legend.key.size=unit(1.6, 'cm'))
-  add = list(scale_fill_manual(values=color), theme_lg)
-  
-  Perf_List %>% boxplot_def(Model, object(score), fill=Dataset,
-                            main=file, legend="Dataset", ylab=ylab, pos=pos,
-                            axis_tl=axis_tl, axis_tx=axis_tx, vjust=1, hjust=1, add=add,
-                            legend_tl=legend_tl, legend_tx=legend_tx, margin=margin, pos_legend="bottom",
-                            margin_lg=margin_lg, alpha=alpha, width=width, height=height, save=save)
-}
-
-plot_perf_bar = function(Perf_List, score="RMSE", dataset=NULL, dir=NULL,
-                         test_type="Normal", col_highlight="#206ba3", 
-                         width=18, height=13.5, axis_tl=27, axis_tx=13.5,  
-                         reorder_score=T, model_except=NULL, include_null=F, save=T) {
-  
-  # width=30, height=18
-  suppressMessages(library(ggtext))
-  
-  highlight = function(x, pattern, color="black", family="") {
-    suppressMessages(library(glue))
-    suppressMessages(library(ggtext))
-    ifelse(grepl(pattern, x), glue("<b style='font-family:{family}; color:{color}'>{x}</b>"), x)
-  }
-  
-  font1 = font("ylab", size=axis_tl, margin=margin(r=0.25, unit="cm"))
-  font2 = font("x.text", color="grey30", size=axis_tx, margin=margin(t=0.25, unit="cm"))
-  font3 = font("y.text", color="grey30", size=axis_tx, margin=margin(r=0.25, unit="cm"))
-  
-  pos = position_dodge(0.8)
-  font = font1 + font2 + font3
-  color = RColorBrewer::brewer.pal(8, "Reds")[c(8, 6, 2)]
-  main = sprintf("%s/Performance [%s, %s]", dir, score, test_type)
-  
-  Perf_List = Perf_List %>% subset(Test_Type==test_type)
-  # levels(Perf_List$Model)[levels(Perf_List$Model)=="GCNPath"] = "<b>GCNPath</b>"
-  
-  if (!is.null(dataset)) {
-    Perf_List = Perf_List %>% subset(Dataset==dataset)
-    main = sprintf("%s/Performance [%s, %s, %s]", dir, score, test_type, dataset)
-    if (include_null) main = sprintf("%s/Performance [%s, %s, %s (+Null Model)]", dir, score, test_type, dataset)
-  }
-  
-  if (!is.null(model_except)) {
-    Perf_List = Perf_List %>% subset(!(Model %in% model_except))
-    Perf_List$Model = Perf_List$Model %>% base::droplevels()
-    if (is.null(dataset)) {
-      main = sprintf("%s/Performance [%s, %s (Except)]", dir, score, test_type)
-    } else main = sprintf("%s/Performance [%s, %s, %s (Except)]", dir, score, test_type, dataset)
-  }
-  
-  if (reorder_score) {
-    lvl_models = Perf_List %>% group_by(Model) %>%
-      summarise(Mean=mean(object(score), na.rm=T)) %>%
-      arrange(desc(Mean)) %>% pull(Model)
-    if (!(score %in% c("RMSE"))) {
-      lvl_models = lvl_models %>% rev
-    }
-    Perf_List$Model = Perf_List$Model %>% factor(levels=lvl_models)
-  }
-  
-  yval = Perf_List[[score]]
-  highlight_x = function(x) highlight(x, "GCNPath", color=col_highlight, family="bold")
-  # sd_max = Perf_List %>% group_by(Model) %>%
-  #   summarise(Mean=mean(object(score), na.rm=T),
-  #             SD=sd(object(score)), na.rm=T) %>%
-  #   filter(Mean==max(Mean)) %>% pull(SD)
-  
-  if (score %in% c("RMSE")) {
-    ymin = min(yval, na.rm=T)-0.002
-    ymax = max(yval, na.rm=T)+0.002
-  } else {
-    ymin = max(min(yval, na.rm=T)-0.002, -1)
-    ymax = min(max(yval, na.rm=T)+0.002, 1)
-  }
-  
-  if (is.null(dataset)) {
-    pl = Perf_List %>%
-      ggbarplot(x="Model", y=score, color="black", fill="Dataset",
-                xlab=F, add="mean_se", position=pos) +
-      scale_fill_manual(values=color)
-  } else {
-    pl = Perf_List %>%
-      ggbarplot(x="Model", y=score, color="black", fill="Model",
-                xlab=F, add="mean_se", position=pos)
-    
-    models = Perf_List$Model %>% unique %>% as.character
-    fill = c("royalblue3", rep("#66b3ed", length(models)-1))
-    names(fill) = c("GCNPath", models[models!="GCNPath"])
-    pl = pl + scale_fill_manual(values=fill)
-    pl = pl %>% ggpar(legend="none")
-    # cf. #539ed6
-  }
-  
-  pl = pl + font + rotate_x_text(30)
-  pl = pl %>% ggpar(ylim=c(ymin, ymax))
-  pl = pl + geom_point(alpha=0.5) +
-    scale_x_discrete(labels=highlight_x) + 
-    theme(axis.text.x=element_markdown())
-  # theme(axis.text.x=element_markdown(size=15, color="grey30", margin=margin(t=10, unit="pt")))
-  
-  if (save) {
-    pl %>% save_fig_ggpubr(main=main, width=width, height=height, svg=T)
-  } else print(pl)
-}
+Perf_UTest_D %>% wilcox_model_grid(models=model_names_, lvl_model=model_names_, main=main3, save=T)
+Perf_UTest_S %>% wilcox_model_grid(models=model_names_, lvl_model=model_names_, main=main4, save=T)
 
 dir = mkdir("Performance [Overall, Boxplot]")
 
@@ -785,7 +366,7 @@ Perf_List %>% plot_perf("SCC", "Drug_Blind", dir=dir, save=T)
 Perf_List %>% plot_perf("SCC", "Strict_Blind", dir=dir, save=T)
 
 dir = mkdir("Performance [Overall, Boxplot (Except)]")
-models_except = c("tCNNS", "HiDRA", "GraphDRP", "PaccMann", "PaccMann_SG")
+models_except = c("tCNNS", "HiDRA", "GraphDRP", "PaccMann", "PaccMann_SG", "RF")
 
 Perf_List %>% 
   subset(!(Model %in% models_except)) %>% 
@@ -810,7 +391,7 @@ Perf_List %>% plot_perf_bar(score="RMSE", dataset="GDSC", test_type=test_type[2]
 Perf_List %>% plot_perf_bar(score="RMSE", dataset="GDSC", test_type=test_type[3], dir=dir, save=T)
 Perf_List %>% plot_perf_bar(score="RMSE", dataset="GDSC", test_type=test_type[4], dir=dir, save=T)
 
-model_except_n = c("tCNNS", "HiDRA", "PaccMann", "PaccMann_SG", "GraphDRP")
+model_except_n = c("tCNNS", "HiDRA", "PaccMann", "PaccMann_SG", "GraphDRP", "RF", "BMTMKL")
 model_except_c = c("tCNNS", "GraphDRP")
 Perf_List %>% plot_perf_bar(score="RMSE", dataset="GDSC", test_type=test_type[1],
                             model_except=model_except_n, dir=dir, width=20, axis_tx=16.5, save=T)
@@ -821,75 +402,6 @@ Perf_List %>% plot_perf_bar(score="RMSE", dataset="GDSC", test_type=test_type[2]
 
 ##### 3-2. Compare Performances [Cell & Drug]
 
-compare_model_grid = function(Perf, models=NULL, by="Cell", main=NULL, lvl_model=NULL,
-                              axis_tx=16.5, legend_tl=18, legend_tx=18, size=4.5,
-                              axis_face="plain", legend_face="plain", text_face="plain", 
-                              round=2, width=30, height=24, save=F) {
-  
-  # axis_tx=20, legend_tl=18, legend_tx=16.5, size=5.25
-  # round=2, width=36, height=30
-  
-  if (!is.null(models)) {
-    Perf = Perf %>% subset(Model %in% models)
-  }
-  
-  if (by=="Cell") {
-    Perf_RMSE = Perf %>% reshape2::acast(Cell~Model, value.var="RMSE")
-    Perf_PCC = Perf %>% reshape2::acast(Cell~Model, value.var="PCC")
-    Perf_SCC = Perf %>% reshape2::acast(Cell~Model, value.var="SCC")
-  } else {
-    Perf_RMSE = Perf %>% reshape2::acast(Drug~Model, value.var="RMSE")
-    Perf_PCC = Perf %>% reshape2::acast(Drug~Model, value.var="PCC")
-    Perf_SCC = Perf %>% reshape2::acast(Drug~Model, value.var="SCC")
-  }
-  
-  Perf_RMSE_Corr = Perf_RMSE %>% cor(use="pairwise.complete.obs")
-  Perf_PCC_Corr = Perf_PCC %>% cor(use="pairwise.complete.obs")
-  Perf_SCC_Corr = Perf_SCC %>% cor(use="pairwise.complete.obs")
-  
-  Perf_RMSE_Corr = Perf_RMSE_Corr %>% as.matrix %>% reshape2::melt() %>% as.data.frame
-  Perf_PCC_Corr = Perf_PCC_Corr %>% as.matrix %>% reshape2::melt() %>% as.data.frame
-  Perf_SCC_Corr = Perf_SCC_Corr %>% as.matrix %>% reshape2::melt() %>% as.data.frame
-  
-  if (!is.null(lvl_model)) {
-    by_ = c("Var1"="Var1", "Var2"="Var2")
-    full_join_ = function(df1, df2) full_join(df1, df2, by=by_)
-    Perf_Corr = Reduce(full_join_, list(Perf_RMSE_Corr, Perf_PCC_Corr, Perf_SCC_Corr))
-    Perf_Corr = Perf_Corr %>% mutate(Var1=factor(Var1, levels=lvl_model),
-                                     Var2=factor(Var2, levels=lvl_model))
-  }
-  
-  colnames(Perf_Corr) = c("Model1", "Model2", "RMSE_Corr", "PCC_Corr", "SCC_Corr")
-  color = scale_fill_gradient(low="white", high="firebrick3")
-  add = list(theme(legend.key.width=unit(0.8, "cm"), 
-                   legend.key.height=unit(1, "cm")))
-  
-  legend_subs = if (by=="Cell") "C" else "D"
-  legend1 = bquote(PCC(RMSE[.(legend_subs)]))
-  legend2 = bquote(PCC(PCC[.(legend_subs)]))
-  legend3 = bquote(PCC(SCC[.(legend_subs)]))
-  
-  Perf_Corr %>% grid_def(Model1, Model2, fill=RMSE_Corr, main=main[1], add=add,
-                         legend=legend1, round=round, size=size, color=color, 
-                         axis_tx=axis_tx, legend_tl=legend_tl, legend_tx=legend_tx,
-                         axis_face=axis_face, legend_face=legend_face, text_face=text_face,
-                         margin_lg=0.5, width=width, height=height, mean_summary=F, save=save)
-  
-  Perf_Corr %>% grid_def(Model1, Model2, fill=PCC_Corr, main=main[2], add=add,
-                         legend=legend2, round=round, size=size, color=color, 
-                         axis_tx=axis_tx, legend_tl=legend_tl, legend_tx=legend_tx,
-                         axis_face=axis_face, legend_face=legend_face, text_face=text_face,
-                         margin_lg=0.5, width=width, height=height, mean_summary=F, save=save)
-  
-  Perf_Corr %>% grid_def(Model1, Model2, fill=SCC_Corr, main=main[3], add=add,
-                         legend=legend3, round=round, size=size, color=color, 
-                         axis_tx=axis_tx, legend_tl=legend_tl, legend_tx=legend_tx,
-                         axis_face=axis_face, legend_face=legend_face, text_face=text_face,
-                         margin_lg=0.5, width=width, height=height, mean_summary=F, save=save)
-  
-  return(Perf_Corr)
-}
-
 # Cell Annotation from SANGER Cell Passports
 file = "Anno_Cells.csv"
 Anno_Cells = read.csv(file)
@@ -898,17 +410,14 @@ Anno_Cells = read.csv(file)
 file = "Anno_Drugs.csv"
 Anno_Drugs = read.csv(file)
 
-idx = match(Perf_Cell$Cell, Anno_Cells$SANGER_MODEL_ID)
-Perf_Cell = Perf_Cell %>% mutate(Cell_TCGA=Anno_Cells$TCGA_CODE[idx]) %>% relocate(Cell_TCGA, .after=Cell)
+idx1 = match(Perf_Cell$Cell, Anno_Cells$SANGER_MODEL_ID)
+idx2 = match(Perf_Drug$Drug, Anno_Drugs$Drug_CID)
+Perf_Cell = Perf_Cell %>% mutate(Cell_TCGA=Anno_Cells$TCGA_CODE[idx1]) %>% relocate(Cell_TCGA, .after=Cell)
+Perf_Drug = Perf_Drug %>% mutate(Drug_Pathway=Anno_Drugs$Target_Pathway[idx2]) %>% relocate(Drug_Pathway, .after=Drug)
+
 Perf_Cell$Cell_TCGA %>% is.na %>% sum   # 0
-Perf_Cell$Cell_TCGA[is.na(Perf_Cell$Cell_TCGA)] = "UNCLASSIFIED"
-
-idx = match(Perf_Drug$Drug, Anno_Drugs$Drug_CID)
-Perf_Drug = Perf_Drug %>% 
-  mutate(Drug_Pathway=Anno_Drugs$Target_Pathway[idx]) %>% 
-  relocate(Drug_Pathway, .after=Drug) %>% as.data.frame
-
 Perf_Drug$Drug_Pathway %>% is.na %>% sum   # 224
+Perf_Cell$Cell_TCGA[is.na(Perf_Cell$Cell_TCGA)] = "UNCLASSIFIED"
 Perf_Drug$Drug_Pathway[is.na(Perf_Drug$Drug_Pathway)] = "Unclassified"
 
 Perf_Cell_N = Perf_Cell %>% subset(Dataset=="GDSC" & Test_Type==test_type[1])
@@ -930,15 +439,16 @@ file1 = sprintf("%s/%s Corr of Models [Cell, %s]", dir, metrics, test_type_[1])
 file2 = sprintf("%s/%s Corr of Models [Cell, %s]", dir, metrics, test_type_[2])
 file3 = sprintf("%s/%s Corr of Models [Cell, %s]", dir, metrics, test_type_[3])
 file4 = sprintf("%s/%s Corr of Models [Cell, %s]", dir, metrics, test_type_[4])
+model_names_ = setdiff(model_names, "BMTMKL")
 
 Perf_Cell_Corr_N = Perf_Cell_N %>% 
   compare_model_grid(models=model_names, by="Cell", lvl_model=model_names, main=file1, save=T)
 Perf_Cell_Corr_C = Perf_Cell_C %>% 
   compare_model_grid(models=model_names, by="Cell", lvl_model=model_names, main=file2, save=T)
 Perf_Cell_Corr_D = Perf_Cell_D %>% 
-  compare_model_grid(models=model_names, by="Cell", lvl_model=model_names, main=file3, save=T)
+  compare_model_grid(models=model_names_, by="Cell", lvl_model=model_names_, main=file3, save=T)
 Perf_Cell_Corr_S = Perf_Cell_S %>% 
-  compare_model_grid(models=model_names, by="Cell", lvl_model=model_names, main=file4, save=T)
+  compare_model_grid(models=model_names_, by="Cell", lvl_model=model_names_, main=file4, save=T)
 
 
 file1 = sprintf("%s/%s Corr of Models [Drug, %s]", dir, metrics, test_type_[1])
@@ -951,9 +461,9 @@ Perf_Drug_Corr_N = Perf_Drug_N %>%
 Perf_Drug_Corr_C = Perf_Drug_C %>% 
   compare_model_grid(models=model_names, by="Drug", lvl_model=model_names, main=file2, save=T)
 Perf_Drug_Corr_D = Perf_Drug_D %>% 
-  compare_model_grid(models=model_names, by="Drug", lvl_model=model_names, main=file3, save=T)
+  compare_model_grid(models=model_names_, by="Drug", lvl_model=model_names_, main=file3, save=T)
 Perf_Drug_Corr_S = Perf_Drug_S %>% 
-  compare_model_grid(models=model_names, by="Drug", lvl_model=model_names, main=file4, save=T)
+  compare_model_grid(models=model_names_, by="Drug", lvl_model=model_names_, main=file4, save=T)
 
 # Number of cells, drugs
 ulen = function(x) x %>% unique %>% length
@@ -988,178 +498,517 @@ write.csv(Perf_Drug, file=file, row.names=F)
 
 
 
-##### Performance Examination [Detailed]
+##### 3-3. Compare Performances [Cell TCGA & Drug MoA]
+Pred_GDSC = list()
+col = c("Model", "Dataset", "Test_Type", 
+        "Fold", "Cell", "Drug", "LN_IC50", "Prediction")
+
+for (i in 1:length(model_names)) {
+  Pred_GDSC[[i]] = get(pred_names[i])$Pred[, col, with=F]
+}
+
+Pred_GDSC = rbindlist(Pred_GDSC)
+idx1 = match(Pred_GDSC$Cell, Anno_Cells$SANGER_MODEL_ID)
+idx2 = match(Pred_GDSC$Drug, Anno_Drugs$Drug_CID)
+Pred_GDSC[, Cell_TCGA:=Anno_Cells$TCGA_CODE[idx1]]
+Pred_GDSC[, Drug_Pathway:=Anno_Drugs$Target_Pathway[idx2]]
+
+Pred_GDSC$Cell_TCGA %>% is.na %>% sum      # 0
+Pred_GDSC$Drug_Pathway %>% is.na %>% sum   # 0
+Pred_GDSC$Drug_Pathway[is.na(Pred_GDSC$Drug_Pathway)] = "Unclassified"
+
+use = "pairwise.complete.obs"
+Perf_Cell_TCGA = Pred_GDSC[!is.infinite(Prediction), 
+                           .(RMSE = RMSE(Prediction, LN_IC50, na.rm=T), 
+                             PCC = cor(Prediction, LN_IC50, use=use), 
+                             SCC = cor(Prediction, LN_IC50, use=use, method="spearman")), 
+                           by=.(Model, Dataset, Test_Type, Cell_TCGA)]
+
+Perf_Drug_Pathway = Pred_GDSC[!is.infinite(Prediction), 
+                              .(RMSE = RMSE(Prediction, LN_IC50, na.rm=T), 
+                                PCC = cor(Prediction, LN_IC50, use=use), 
+                                SCC = cor(Prediction, LN_IC50, use=use, method="spearman")), 
+                              by=.(Model, Dataset, Test_Type, Drug_Pathway)]
+
+Perf_Cell_TCGA = Perf_Cell_TCGA %>% as.data.frame
+Perf_Drug_Pathway = Perf_Drug_Pathway %>% as.data.frame
+
+dataset_ = "GDSC2"
+
+### Cell TCGA & Drug MoA [Barplot]
+dir = mkdir(sprintf("Performance by Cell TCGA and Drug MoA [Barplot, %s]", dataset_))
+main = sprintf("%s/Performance by Cell TCGA [%s]", dir, test_type)
+Perf_Cell_TCGA %>% plot_perf_bar(score="RMSE", dataset=dataset_, test_type=test_type[1], main=main[1], save=T)
+Perf_Cell_TCGA %>% plot_perf_bar(score="RMSE", dataset=dataset_, test_type=test_type[2], main=main[2], save=T)
+Perf_Cell_TCGA %>% plot_perf_bar(score="RMSE", dataset=dataset_, test_type=test_type[4], main=main[4], save=T)
+
+main = sprintf("%s/Performance by Drug MoA [%s]", dir, test_type)
+Perf_Drug_Pathway %>% plot_perf_bar(score="RMSE", dataset=dataset_, test_type=test_type[1], main=main[1], save=T)
+Perf_Drug_Pathway %>% plot_perf_bar(score="RMSE", dataset=dataset_, test_type=test_type[3], main=main[3], save=T)
+Perf_Drug_Pathway %>% plot_perf_bar(score="RMSE", dataset=dataset_, test_type=test_type[4], main=main[4], save=T)
+
+### Cell TCGA & Drug MoA [Heatmap]
+dir = mkdir("Performance by Cell TCGA and Drug MoA [Heatmap, GDSC1+2]")
+main = sprintf("%s/Performance by Cell TCGA [%s]", dir, test_type)
+
+Perf_Cell_TCGA %>% 
+  subset(Dataset=="GDSC" & Test_Type==test_type[1]) %>% 
+  mutate(Model=factor(Model, levels=model_names)) %>% 
+  reshape2::acast(Cell_TCGA~Model, value.var="RMSE") %>% as.data.frame %>% 
+  heatmap_save(main=main[1], add=add, width=24, height=40, text_num=12, 
+               show_row=T, show_col=T, show_num=T, center_zero=T, 
+               clust_row=F, clust_col=F, scale_row=T, save=T, save_svg=T)
+
+Perf_Cell_TCGA %>% 
+  subset(Dataset=="GDSC" & Test_Type==test_type[2]) %>% 
+  mutate(Model=factor(Model, levels=model_names)) %>% 
+  reshape2::acast(Cell_TCGA~Model, value.var="RMSE") %>% as.data.frame %>% 
+  heatmap_save(main=main[2], add=add, width=24, height=40, text_num=12, 
+               show_row=T, show_col=T, show_num=T, center_zero=T, 
+               clust_row=F, clust_col=F, scale_row=T, save=T, save_svg=T)
+
+Perf_Cell_TCGA %>% 
+  subset(Dataset=="GDSC" & Test_Type==test_type[4]) %>% 
+  mutate(Model=factor(Model, levels=model_names)) %>% 
+  reshape2::acast(Cell_TCGA~Model, value.var="RMSE") %>% as.data.frame %>% 
+  heatmap_save(main=main[4], add=add, width=24, height=40, text_num=12, 
+               show_row=T, show_col=T, show_num=T, center_zero=T, 
+               clust_row=F, clust_col=F, scale_row=T, save=T, save_svg=T)
+
+main = sprintf("%s/Performance by Drug Pathway [%s]", dir, test_type)
+
+Perf_Drug_Pathway %>% 
+  subset(Dataset=="GDSC" & Test_Type==test_type[1]) %>% 
+  mutate(Model=factor(Model, levels=model_names)) %>% 
+  reshape2::acast(Drug_Pathway~Model, value.var="RMSE") %>% as.data.frame %>% 
+  heatmap_save(main=main[1], add=add, width=27, height=30, text_num=12, 
+               show_row=T, show_col=T, show_num=T, center_zero=T, 
+               clust_row=F, clust_col=F, scale_row=T, save=T, save_svg=T)
+
+Perf_Drug_Pathway %>% 
+  subset(Dataset=="GDSC" & Test_Type==test_type[3]) %>% 
+  mutate(Model=factor(Model, levels=model_names)) %>% 
+  reshape2::acast(Drug_Pathway~Model, value.var="RMSE") %>% as.data.frame %>% 
+  heatmap_save(main=main[3], add=add, width=27, height=30, text_num=12, 
+               show_row=T, show_col=T, show_num=T, center_zero=T, 
+               clust_row=F, clust_col=F, scale_row=T, save=T, save_svg=T)
+
+Perf_Drug_Pathway %>% 
+  subset(Dataset=="GDSC" & Test_Type==test_type[4]) %>% 
+  mutate(Model=factor(Model, levels=model_names)) %>% 
+  reshape2::acast(Drug_Pathway~Model, value.var="RMSE") %>% as.data.frame %>% 
+  heatmap_save(main=main[4], add=add, width=27, height=30, text_num=12, 
+               show_row=T, show_col=T, show_num=T, center_zero=T, 
+               clust_row=F, clust_col=F, scale_row=T, save=T, save_svg=T)
+
+
+add1 = list(scale_fill_manual(values=rep("#66b3ed", 38)))
+add2 = list(scale_fill_manual(values=rep("#66b3ed", 24)))
+dir = mkdir("Performance by Cell TCGA and Drug MoA [GCNPath]")
+
+ylab = bquote(RMSE[C])
+main = sprintf("%s/Performance by Cell TCGA in GCNPath [GDSC1+2, %s]", dir, test_type)
+Perf_Cell %>% 
+  subset(Model=="GCNPath" & Dataset=="GDSC" & Test_Type==test_type[1]) %>%
+  boxplot_def(Cell_TCGA, RMSE, main=main[1], legend=F, reorder=T, axis_tl=24, add=add1, alpha=0.9,
+              ylab=ylab, angle=36, width=32, hjust=1, vjust=1, legend_tx=10.8, save=T)
+Perf_Cell %>% 
+  subset(Model=="GCNPath" & Dataset=="GDSC" & Test_Type==test_type[2]) %>%
+  boxplot_def(Cell_TCGA, RMSE, main=main[2], legend=F, reorder=T, axis_tl=24, add=add1, alpha=0.9,
+              ylab=ylab, angle=36, width=32, hjust=1, vjust=1, legend_tx=10.8, save=T)
+Perf_Cell %>% 
+  subset(Model=="GCNPath" & Dataset=="GDSC" & Test_Type==test_type[4]) %>%
+  boxplot_def(Cell_TCGA, RMSE, main=main[4], legend=F, reorder=T, axis_tl=24, add=add1, alpha=0.9,
+              ylab=ylab, angle=36, width=32, hjust=1, vjust=1, legend_tx=10.8, save=T)
+
+ylab = bquote(RMSE[D])
+main = sprintf("%s/Performance by Drug MoA in GCNPath [GDSC1+2, %s]", dir, test_type)
+Perf_Drug %>% 
+  subset(Model=="GCNPath" & Dataset=="GDSC" & Test_Type==test_type[1]) %>%
+  boxplot_def(Drug_Pathway, RMSE, main=main[1], legend=F, reorder=T, axis_tl=24, add=add2, alpha=0.9,
+              ylab=ylab, angle=36, width=32, hjust=1, vjust=1, legend_tx=9, save=T)
+Perf_Drug %>% 
+  subset(Model=="GCNPath" & Dataset=="GDSC" & Test_Type==test_type[3]) %>%
+  boxplot_def(Drug_Pathway, RMSE, main=main[3], legend=F, reorder=T, axis_tl=24, add=add2, alpha=0.9,
+              ylab=ylab, angle=36, width=32, hjust=1, vjust=1, legend_tx=9, save=T)
+Perf_Drug %>% 
+  subset(Model=="GCNPath" & Dataset=="GDSC" & Test_Type==test_type[4]) %>%
+  boxplot_def(Drug_Pathway, RMSE, main=main[4], legend=F, reorder=T, axis_tl=24, add=add2, alpha=0.9,
+              ylab=ylab, angle=36, width=32, hjust=1, vjust=1, legend_tx=9, save=T)
+
+
+
+
+# [GCNPath, GDSC1 vs GDSC1+2]
+dataset = c("GDSC", "GDSC1", "GDSC2")
+dir = mkdir("Performance by Cell TCGA and Drug MoA [GCNPath, GDSC1 vs GDSC1+2]")
+main1 = sprintf("%s/Performance by Cell TCGA in GCNPath [%s]", dir, test_type[c(1, 2, 4)])
+main2 = sprintf("%s/Performance by Drug MoA in GCNPath [%s]", dir, test_type[c(1, 3, 4)])
+
+Perf_GCNPath_GDSC1C = Perf_Cell_TCGA %>% 
+  subset(Model=="GCNPath" & Dataset %in% dataset[c(1, 2)] & Test_Type %in% test_type[c(1, 2, 4)]) %>%
+  reshape2::dcast(Cell_TCGA~Dataset+Test_Type, value.var="RMSE") %>% 
+  relocate(GDSC1_Normal, GDSC1_Cell_Blind, GDSC1_Strict_Blind, 
+           GDSC_Normal, GDSC_Cell_Blind, GDSC_Strict_Blind, .after=Cell_TCGA)
+
+Perf_GCNPath_GDSC1D = Perf_Drug_Pathway %>% 
+  subset(Model=="GCNPath" & Dataset %in% dataset[c(1, 2)] & Test_Type %in% test_type[c(1, 3, 4)]) %>%
+  reshape2::dcast(Drug_Pathway~Dataset+Test_Type, value.var="RMSE") %>% 
+  relocate(GDSC1_Normal, GDSC1_Drug_Blind, GDSC1_Strict_Blind, 
+           GDSC_Normal, GDSC_Drug_Blind, GDSC_Strict_Blind, .after=Drug_Pathway)
+
+add_c = list(text_repel_def(NULL, Cell_TCGA))
+add_d = list(text_repel_def(NULL, Drug_Pathway))
+labs = sprintf("RMSE [%s]", dataset[c(1, 2)])
+
+Perf_GCNPath_GDSC1C %>% 
+  plot_def(GDSC1_Normal, GDSC_Normal, 
+           main=main1[1], xlab=labs[1], ylab=labs[2], add=add_c, 
+           width=10, height=10, xy_line=T, unify_lims=T, save=T)
+
+Perf_GCNPath_GDSC1C %>% 
+  plot_def(GDSC1_Cell_Blind, GDSC_Cell_Blind, 
+           main=main1[2], xlab=labs[1], ylab=labs[2], add=add_c, 
+           width=10, height=10, xy_line=T, unify_lims=T, save=T)
+
+Perf_GCNPath_GDSC1C %>% 
+  plot_def(GDSC1_Strict_Blind, GDSC_Strict_Blind, 
+           main=main1[3], xlab=labs[1], ylab=labs[2], add=add_c, 
+           width=10, height=10, xy_line=T, unify_lims=T, save=T)
+
+Perf_GCNPath_GDSC1D %>% 
+  plot_def(GDSC1_Normal, GDSC_Normal, 
+           main=main2[1], xlab=labs[1], ylab=labs[2], add=add_d, 
+           width=10, height=10, xy_line=T, unify_lims=T, save=T)
+
+Perf_GCNPath_GDSC1D %>% 
+  plot_def(GDSC1_Drug_Blind, GDSC_Drug_Blind, 
+           main=main2[2], xlab=labs[1], ylab=labs[2], add=add_d,  
+           width=10, height=10, xy_line=T, unify_lims=T, save=T)
+
+Perf_GCNPath_GDSC1D %>% 
+  plot_def(GDSC1_Strict_Blind, GDSC_Strict_Blind, 
+           main=main2[3], xlab=labs[1], ylab=labs[2], add=add_d, 
+           width=10, height=10, xy_line=T, unify_lims=T, save=T)
+
+
+# [GCNPath, GDSC2 vs GDSC1+2]
+labs = sprintf("RMSE [%s]", dataset[c(1, 3)])
+dir = mkdir("Performance by Cell TCGA and Drug MoA [GCNPath, GDSC2 vs GDSC1+2]")
+main1 = sprintf("%s/Performance by Cell TCGA in GCNPath [%s]", dir, test_type[c(1, 2, 4)])
+main2 = sprintf("%s/Performance by Drug MoA in GCNPath [%s]", dir, test_type[c(1, 3, 4)])
+
+Perf_GCNPath_GDSC2C = Perf_Cell_TCGA %>% 
+  subset(Model=="GCNPath" & Dataset %in% dataset[c(1, 3)] & Test_Type %in% test_type[c(1, 2, 4)]) %>%
+  reshape2::dcast(Cell_TCGA~Dataset+Test_Type, value.var="RMSE") %>% 
+  relocate(GDSC2_Normal, GDSC2_Cell_Blind, GDSC2_Strict_Blind, 
+           GDSC_Normal, GDSC_Cell_Blind, GDSC_Strict_Blind, .after=Cell_TCGA)
+
+Perf_GCNPath_GDSC2D = Perf_Drug_Pathway %>% 
+  subset(Model=="GCNPath" & Dataset %in% dataset[c(1, 3)] & Test_Type %in% test_type[c(1, 3, 4)]) %>%
+  reshape2::dcast(Drug_Pathway~Dataset+Test_Type, value.var="RMSE") %>% 
+  relocate(GDSC2_Normal, GDSC2_Drug_Blind, GDSC2_Strict_Blind, 
+           GDSC_Normal, GDSC_Drug_Blind, GDSC_Strict_Blind, .after=Drug_Pathway)
+
+Perf_GCNPath_GDSC2C %>% 
+  plot_def(GDSC2_Normal, GDSC_Normal, 
+           main=main1[1], xlab=labs[1], ylab=labs[2], add=add_c,
+           width=10, height=10, xy_line=T, unify_lims=T, save=T)
+
+Perf_GCNPath_GDSC2C %>% 
+  plot_def(GDSC2_Cell_Blind, GDSC_Cell_Blind, 
+           main=main1[2], xlab=labs[1], ylab=labs[2], add=add_c,
+           width=10, height=10, xy_line=T, unify_lims=T, save=T)
+
+Perf_GCNPath_GDSC2C %>% 
+  plot_def(GDSC2_Strict_Blind, GDSC_Strict_Blind, 
+           main=main1[3], xlab=labs[1], ylab=labs[2], add=add_c,
+           width=10, height=10, xy_line=T, unify_lims=T, save=T)
+
+Perf_GCNPath_GDSC2D %>% 
+  plot_def(GDSC2_Normal, GDSC_Normal, 
+           main=main2[1], xlab=labs[1], ylab=labs[2], add=add_d,
+           width=10, height=10, xy_line=T, unify_lims=T, save=T)
+
+Perf_GCNPath_GDSC2D %>% 
+  plot_def(GDSC2_Drug_Blind, GDSC_Drug_Blind,
+           main=main2[2], xlab=labs[1], ylab=labs[2], add=add_d,
+           width=10, height=10, xy_line=T, unify_lims=T, save=T)
+
+Perf_GCNPath_GDSC2D %>% 
+  plot_def(GDSC2_Strict_Blind, GDSC_Strict_Blind, 
+           main=main2[3], xlab=labs[1], ylab=labs[2], add=add_d,
+           width=10, height=10, xy_line=T, unify_lims=T, save=T)
+
+
+
+
+##### 4. Performance Examination [Detailed]
 ### Which factors affect the RMSE (based on GCNPath)?
 
-test = c("Normal", "Cell_Blind", "Drug_Blind", "Strict_Blind")
-Pred_GCNPath_N = Pred_GCNPath$Pred %>% as.data.frame %>% 
-  subset(Test_Type==test[1] & Dataset=="GDSC")
+bimodality <- function(x) {
+  x <- na.omit(x)
+  n <- length(x)
+  g <- e1071::skewness(x, type = 1)
+  k <- e1071::kurtosis(x, type = 1) + 3
+  bc <- (g^2 + 1) / (k + (3 * (n - 1)^2) / ((n - 2) * (n - 3)))
+  return(bc)
+}
 
-# Anno_Cells, Anno_Drugs
-idx1 = match(Pred_GCNPath_N$Cell, Anno_Cells$SANGER_MODEL_ID)
-idx2 = match(Pred_GCNPath_N$Drug, Anno_Drugs$Drug_CID)
-
-Pred_GCNPath_N = Pred_GCNPath_N %>% 
-  mutate(Cell_TCGA=Anno_Cells$TCGA_CODE[idx1], 
-         Drug_Pathway=Anno_Drugs$Target_Pathway[idx2])
-
-Pred_GCNPath_N$Cell_TCGA %>% is.na %>% sum      # 0
-Pred_GCNPath_N$Drug_Pathway %>% is.na %>% sum   # 1426
-Pred_GCNPath_N$Drug_Pathway[is.na(Pred_GCNPath_N$Drug_Pathway)] = "Unclassified"
-
-
-
-### 1. IC50 Mean & Variation
-
-dir = mkdir("Analysis of Error")
-col = c("Cell", "Drug", "LN_IC50", "Prediction", "Cell_TCGA", "Drug_Pathway")
-
-IC50_Stat_Cell = Pred_GCNPath_N[, col] %>% group_by(Cell, Cell_TCGA) %>% 
-  summarise(Num=n(), RMSE=RMSE(LN_IC50, Prediction), 
-            IC50_Mean=mean(LN_IC50), IC50_SD=sd(LN_IC50)) %>% as.data.frame   # 972
-
-IC50_Stat_Drug = Pred_GCNPath_N[, col] %>% group_by(Drug, Drug_Pathway) %>% 
-  summarise(Num=n(), RMSE=RMSE(LN_IC50, Prediction), 
-            IC50_Mean=mean(LN_IC50), IC50_SD=sd(LN_IC50)) %>% as.data.frame   # 432
-
-IC50_Stat_Cell_Group = Pred_GCNPath_N[, col] %>% group_by(Cell_TCGA) %>% 
-  summarise(Num=n(), RMSE=RMSE(LN_IC50, Prediction), 
-            IC50_Mean=mean(LN_IC50), IC50_SD=sd(LN_IC50)) %>% as.data.frame   # 38
-
-IC50_Stat_Drug_Group = Pred_GCNPath_N[, col] %>% group_by(Drug_Pathway) %>% 
-  summarise(Num=n(), RMSE=RMSE(LN_IC50, Prediction), 
-            IC50_Mean=mean(LN_IC50), IC50_SD=sd(LN_IC50)) %>% as.data.frame   # 24
-
-# by = c("Cell", "Drug")
-# ylab = sprintf("RMSE [%s]", by)
-
-ylab_c = bquote(RMSE[C])
-ylab_d = bquote(RMSE[D])
-xlab = bquote(Mean~ln(IC[50]))
-main = sprintf("%s/IC50_Mean & RMSE Relation [%s]", dir, by)
-add = list(stat_smooth(method="lm"))
-
-IC50_Stat_Cell %>% with(cor(IC50_Mean, RMSE)) %>% round(3)   # PCC=0.220
-IC50_Stat_Cell %>% plot_def(IC50_Mean, RMSE, main=main[1], xlab=xlab, ylab=ylab_c, add=add, 
-                            size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
-
-IC50_Stat_Drug %>% with(cor(IC50_Mean, RMSE)) %>% round(3)   # PCC=-0.305
-IC50_Stat_Drug %>% plot_def(IC50_Mean, RMSE, main=main[2], xlab=xlab, ylab=ylab_d, add=add, 
-                            size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
-
-xlab = bquote(SD~ln(IC[50]))
-main = sprintf("%s/IC50_SD & RMSE Relation [%s]", dir, by)
-
-IC50_Stat_Cell %>% with(cor(IC50_SD, RMSE)) %>% round(3)   # PCC=-0.003
-IC50_Stat_Cell %>% plot_def(IC50_SD, RMSE, main=main[1], xlab=xlab, ylab=ylab_c, add=add, 
-                            size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
-
-IC50_Stat_Drug %>% with(cor(IC50_SD, RMSE)) %>% round(3)   # PCC=0.776
-IC50_Stat_Drug %>% plot_def(IC50_SD, RMSE, main=main[2], xlab=xlab, ylab=ylab_d, add=add, 
-                            size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
-
-
-### 2. Num of Cell & Drug 
-
-subtitle = c("Cell", "Drug", "Cell TCGA", "Drug Pathway")
-main = sprintf("%s/IC50 Number & RMSE [%s]", dir, subtitle)
-
-xlab = bquote(Number~of~ln(IC[50]))
-# ylab = c("RMSE [Cell]", "RMSE [Drug]", "RMSE [Cell, TCGA Code]", "RMSE [Drug, Target Pathway]")
-
-ylab_c = bquote(RMSE[C])
-ylab_d = bquote(RMSE[D])
-ylab_c_ = "RMSE per Cancer Type"
-ylab_d_ = "RMSE per Target Pathway"
-
-IC50_Stat_Cell %>% with(cor(Num, RMSE)) %>% round(3)   # PCC=-0.198
-IC50_Stat_Cell %>% plot_def(Num, RMSE, main=main[1], xlab=xlab, ylab=ylab_c,
-                            size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
-
-IC50_Stat_Drug %>% with(cor(Num, RMSE)) %>% round(3)   # PCC=-0.115
-IC50_Stat_Drug %>% plot_def(Num, RMSE, main=main[2], xlab=xlab, ylab=ylab_d,
-                            size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
-
-add = list(theme(axis.title.x=element_text(size=30)))
-
-IC50_Stat_Cell_Group %>% with(cor(Num, RMSE)) %>% round(3)   # PCC=-0.11
-IC50_Stat_Cell_Group %>% plot_def(Num, RMSE, main=main[3], xlab=xlab, ylab=ylab_c_,
-                                  size=2, alpha=0.5, axis_tl=25, axis_tx=18, add=add, save=T)
-
-IC50_Stat_Drug_Group %>% with(cor(Num, RMSE)) %>% round(3)   # PCC=0.067
-IC50_Stat_Drug_Group %>% plot_def(Num, RMSE, main=main[4], xlab=xlab, ylab=ylab_d_,
-                                  size=2, alpha=0.5, axis_tl=25, axis_tx=18, add=add, save=T)
-
-# Cell 972, Drug 432
-# Large sample size does not always guarantee the low RMSE, especially drugs...
-
-
-
-### 3. IC50 Variation [GDSC-CCLE]
+dcoverage <- function(x, global_cdf) {
+  q10 <- quantile(x, 0.10, na.rm = TRUE)
+  q90 <- quantile(x, 0.90, na.rm = TRUE)
+  return(global_cdf(q90) - global_cdf(q10))
+}
 
 # IC50 CCLE
 # GDSC_Last/processed_data/ic50_data/IC50_CCLE.csv
 IC50_CCLE = read.csv("IC50_CCLE.csv")
-IC50_CCLE = IC50_CCLE %>% rename(LN_IC50_CCLE=LN_IC50)
+IC50_CCLE = IC50_CCLE %>% rename(LN_IC50_CCLE=LN_IC50) %>% subset(!Capping)   # 5171
 # IC50_CCLE, IC50_CCLE_FT
 
-col = c("Cell_SANGER_ID", "Drug_CID", "LN_IC50_CCLE")
-by = c("Cell"="Cell_SANGER_ID", "Drug"="Drug_CID")
-Pred_GCNPath_N_CCLE = Pred_GCNPath_N %>% inner_join(IC50_CCLE[, col], by=by)   # 5567
+Stat_Cell_List = list()
+Stat_Drug_List = list()
+Stat_CCLE_List = list()
+Stat_Cell_List_Group = list()
+Stat_Drug_List_Group = list()
 
-min_ccle = min(Pred_GCNPath_N_CCLE$LN_IC50_CCLE)
-max_ccle = max(Pred_GCNPath_N_CCLE$LN_IC50_CCLE)
-sum(Pred_GCNPath_N_CCLE$LN_IC50_CCLE>=max_ccle)   # 2967 [53.29%]
-sum(Pred_GCNPath_N_CCLE$LN_IC50_CCLE<=min_ccle)   # 38 [0.68%]
+add = list(stat_smooth(method="lm"))
+test_type = c("Normal", "Cell_Blind", "Drug_Blind", "Strict_Blind")
 
-Pred_GCNPath_N_CCLE$Cell %>% unique %>% length    # 374
-Pred_GCNPath_N_CCLE$Drug %>% unique %>% length    # 18
+for (ttype in test_type) {
+  sprintf("### Performance Analysis in %s", ttype) %>% print
+  dir = mkdir(sprintf("Analysis of Error [%s]", ttype))
+  
+  Pred_GCNPath_ = Pred_GCNPath$Pred %>% as.data.frame %>%
+    subset(Test_Type==ttype & Dataset=="GDSC")
+  
+  # Anno_Cells, Anno_Drugs
+  idx1 = match(Pred_GCNPath_$Cell, Anno_Cells$SANGER_MODEL_ID)
+  idx2 = match(Pred_GCNPath_$Drug, Anno_Drugs$Drug_CID)
+  
+  Pred_GCNPath_ = Pred_GCNPath_ %>%
+    mutate(Cell_TCGA=Anno_Cells$TCGA_CODE[idx1],
+           Drug_Pathway=Anno_Drugs$Target_Pathway[idx2])
+  
+  Pred_GCNPath_$Cell_TCGA %>% is.na %>% sum      # 0
+  Pred_GCNPath_$Drug_Pathway %>% is.na %>% sum   # 1426
+  Pred_GCNPath_$Drug_Pathway[is.na(Pred_GCNPath_$Drug_Pathway)] = "Unclassified"
+  
+  global_cdf = ecdf(Pred_GCNPath_$LN_IC50)
+  col = c("Cell", "Drug", "LN_IC50", "Prediction", "Cell_TCGA", "Drug_Pathway")
+  
+  IC50_Stat_Cell = Pred_GCNPath_[, col] %>% group_by(Cell, Cell_TCGA) %>%
+    summarise(Num=n(),
+              SCC=cor(LN_IC50, Prediction, method="spearman"),
+              IC50_Mean=mean(LN_IC50), IC50_SD=sd(LN_IC50),
+              IC50_Bimodality=bimodality(LN_IC50),
+              IC50_Coverage=dcoverage(LN_IC50, global_cdf)) %>% as.data.frame   # 972
+  
+  IC50_Stat_Drug = Pred_GCNPath_[, col] %>% group_by(Drug, Drug_Pathway) %>%
+    summarise(Num=n(),
+              SCC=cor(LN_IC50, Prediction, method="spearman"),
+              IC50_Mean=mean(LN_IC50), IC50_SD=sd(LN_IC50),
+              IC50_Bimodality=bimodality(LN_IC50),
+              IC50_Coverage=dcoverage(LN_IC50, global_cdf)) %>% as.data.frame   # 432
+  
+  IC50_Stat_Cell_Group = Pred_GCNPath_[, col] %>% group_by(Cell_TCGA) %>%
+    summarise(Num=n(), SCC=cor(LN_IC50, Prediction, method="spearman")) %>% as.data.frame   # 38
+  
+  IC50_Stat_Drug_Group = Pred_GCNPath_[, col] %>% group_by(Drug_Pathway) %>%
+    summarise(Num=n(), SCC=cor(LN_IC50, Prediction, method="spearman")) %>% as.data.frame   # 24
+  
+  Stat_Cell_List[[ttype]] = IC50_Stat_Cell
+  Stat_Drug_List[[ttype]] = IC50_Stat_Drug
+  Stat_Cell_List_Group[[ttype]] = IC50_Stat_Cell_Group
+  Stat_Drug_List_Group[[ttype]] = IC50_Stat_Drug_Group
+  
+  
+  ### 1. IC50 Variation
+  print("# 1. IC50 Variation")
+  xlab = bquote(SD~ln(IC[50]))
+  main = sprintf("%s/IC50_SD & SCC Relation [%s]", dir, by)
+  
+  IC50_Stat_Drug %>% with(cor(IC50_SD, SCC)) %>% round(3) %>% print   # PCC=0.776
+  IC50_Stat_Drug %>% plot_def(IC50_SD, SCC, main=main[2], xlab=xlab, ylab=ylab_d, add=add,
+                              size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
+  
+  IC50_Stat_Cell %>% with(cor(IC50_SD, SCC)) %>% round(3) %>% print   # PCC=-0.003
+  IC50_Stat_Cell %>% plot_def(IC50_SD, SCC, main=main[1], xlab=xlab, ylab=ylab_c, add=add,
+                              size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
+  
+  
+  ### 2. IC50 Bimodality
+  print("# 2. IC50 Bimodality")
+  xlab = bquote(Bimodality~ln(IC[50]))
+  main = sprintf("%s/IC50_Bimodality & SCC Relation [%s]", dir, by)
+  
+  IC50_Stat_Drug %>% with(cor(IC50_Bimodality, SCC)) %>% round(3) %>% print   # PCC=0.776
+  IC50_Stat_Drug %>% plot_def(IC50_Bimodality, SCC, main=main[2], xlab=xlab, ylab=ylab_d, add=add,
+                              size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
+  
+  IC50_Stat_Cell %>% with(cor(IC50_Bimodality, SCC)) %>% round(3) %>% print   # PCC=-0.003
+  IC50_Stat_Cell %>% plot_def(IC50_Bimodality, SCC, main=main[1], xlab=xlab, ylab=ylab_c, add=add,
+                              size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
+  
+  
+  ### 3. IC50 Coverage
+  print("# 3. IC50 Coverage")
+  xlab = bquote(Coverage~ln(IC[50]))
+  main = sprintf("%s/IC50_Coverage & SCC Relation [%s]", dir, by)
+  
+  IC50_Stat_Drug %>% with(cor(IC50_Coverage, SCC)) %>% round(3) %>% print   # PCC=0.776
+  IC50_Stat_Drug %>% plot_def(IC50_Coverage, SCC, main=main[2], xlab=xlab, ylab=ylab_d, add=add,
+                              size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
+  
+  IC50_Stat_Cell %>% with(cor(IC50_Coverage, SCC)) %>% round(3) %>% print   # PCC=-0.003
+  IC50_Stat_Cell %>% plot_def(IC50_Coverage, SCC, main=main[1], xlab=xlab, ylab=ylab_c, add=add,
+                              size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
+  
+  
+  ### 4. IC50 Mean
+  print("# 4. IC50 Mean")
+  ylab_c = bquote(SCC[C])
+  ylab_d = bquote(SCC[D])
+  xlab = bquote(Mean~ln(IC[50]))
+  main = sprintf("%s/IC50_Mean & SCC Relation [%s]", dir, by)
+  
+  IC50_Stat_Drug %>% with(cor(IC50_Mean, SCC)) %>% round(3) %>% print   # PCC=-0.305
+  IC50_Stat_Drug %>% plot_def(IC50_Mean, SCC, main=main[2], xlab=xlab, ylab=ylab_d, add=add,
+                              size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
+  
+  IC50_Stat_Cell %>% with(cor(IC50_Mean, SCC)) %>% round(3) %>% print   # PCC=0.220
+  IC50_Stat_Cell %>% plot_def(IC50_Mean, SCC, main=main[1], xlab=xlab, ylab=ylab_c, add=add,
+                              size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
+  
+  
+  ### 5. Num of Cell & Drug
+  print("# 5. Num of Cell & Drug")
+  subtitle = c("Cell", "Drug", "Cell TCGA", "Drug Pathway")
+  main = sprintf("%s/IC50 Number & SCC [%s]", dir, subtitle)
+  
+  xlab = bquote(Number~of~ln(IC[50]))
+  ylab_c = bquote(SCC[C])
+  ylab_d = bquote(SCC[D])
+  ylab_c_ = "SCC per Cancer Type"
+  ylab_d_ = "SCC per Target Pathway"
+  
+  IC50_Stat_Drug %>% with(cor(Num, SCC)) %>% round(3) %>% print   # PCC=-0.115
+  IC50_Stat_Drug %>% plot_def(Num, SCC, main=main[2], xlab=xlab, ylab=ylab_d,
+                              size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
+  
+  IC50_Stat_Cell %>% with(cor(Num, SCC)) %>% round(3) %>% print   # PCC=-0.198
+  IC50_Stat_Cell %>% plot_def(Num, SCC, main=main[1], xlab=xlab, ylab=ylab_c,
+                              size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
+  
+  
+  ### 6. Num of Cell & Drug [Group Level]
+  print("# 6. Num of Cell & Drug [Group Level]")
+  add = list(theme(axis.title.x=element_text(size=30)))
+  
+  IC50_Stat_Drug_Group %>% with(cor(Num, SCC)) %>% round(3) %>% print   # PCC=0.067
+  IC50_Stat_Drug_Group %>% plot_def(Num, SCC, main=main[4], xlab=xlab, ylab=ylab_d_,
+                                    size=2, alpha=0.5, axis_tl=25, axis_tx=18, add=add, save=T)
+  
+  IC50_Stat_Cell_Group %>% with(cor(Num, SCC)) %>% round(3) %>% print   # PCC=-0.11
+  IC50_Stat_Cell_Group %>% plot_def(Num, SCC, main=main[3], xlab=xlab, ylab=ylab_c_,
+                                    size=2, alpha=0.5, axis_tl=25, axis_tx=18, add=add, save=T)
+  
+  
+  ### 7. IC50 Variation [GDSC-CCLE]
+  print("# 7. IC50 Variation [GDSC-CCLE]")
+  col = c("Cell_SANGER_ID", "Drug_CID", "LN_IC50_CCLE")
+  by = c("Cell"="Cell_SANGER_ID", "Drug"="Drug_CID")
+  Pred_GCNPath_CCLE = Pred_GCNPath_ %>% inner_join(IC50_CCLE[, col], by=by)   # 5567
+  Stat_CCLE_List[[ttype]] = Pred_GCNPath_CCLE
+  
+  # min_ccle = min(Pred_GCNPath_CCLE$LN_IC50_CCLE)
+  # max_ccle = max(Pred_GCNPath_CCLE$LN_IC50_CCLE)
+  # sum(Pred_GCNPath_CCLE$LN_IC50_CCLE>=max_ccle)   # 2967 [53.29%]
+  # sum(Pred_GCNPath_CCLE$LN_IC50_CCLE<=min_ccle)   # 38 [0.68%]
+  #
+  # Pred_GCNPath_CCLE$Cell %>% unique %>% length    # 374
+  # Pred_GCNPath_CCLE$Drug %>% unique %>% length    # 18
+  #
+  # Pred_GCNPath_CCLE$LN_IC50 %>% is.na %>% sum         # 0
+  # Pred_GCNPath_CCLE$LN_IC50_CCLE %>% is.na %>% sum    # 0
+  # Pred_GCNPath_CCLE$LN_IC50_CCLE %>% hist             # Almost 2.07944154 [Max 8uM]
+  
+  
+  xlab = bquote(GDSC~ln(IC[50]))
+  ylab = bquote(CCLE~ln(IC[50]))
+  main = sprintf("%s/LN_IC50 [GDSC-CCLE] & Pred_Error (color)", dir)
+  
+  add = list(scale_color_gradient(low="beige", high="firebrick3"))
+  # midpoint = Pred_GCNPath_CCLE %>% with(abs(Prediction-LN_IC50)) %>% quantile(0.01)
+  
+  Pred_GCNPath_CCLE %>%
+    mutate(Pred_Error=abs(Prediction-LN_IC50)) %>%
+    plot_def(LN_IC50, LN_IC50_CCLE, color=Pred_Error,
+             main=main, xlab=xlab, ylab=ylab, size=2.5, alpha=0.8,
+             legend="|Error|", color_line="red", add=add,
+             axis_tl=30, axis_tx=24, legend_tl=20, legend_tx=20, margin_lg=0.4,
+             width=20, height=16.5, dpi=1000, xy_line=T, raster=T, save=T, save_svg=T)
+  
+  xlab = bquote("|"~GDSC~ln(IC[50]) - " " * CCLE~ln(IC[50])~"|")
+  ylab = bquote("|"~GDSC~ln(IC[50]) - " " * Prediction~"|")
+  main = sprintf("%s/LN_IC50 [GDSC-CCLE] & Pred_Error (no color)", dir)
+  
+  Pred_GCNPath_CCLE %>%
+    mutate(Pred_Error=abs(Prediction-LN_IC50),
+           LN_IC50_Var=abs(LN_IC50-LN_IC50_CCLE)) %>%
+    plot_def(LN_IC50_Var, Pred_Error, main=main, xlab=xlab, ylab=ylab,
+             size=2.5, alpha=0.5, axis_tl=22.5, axis_tx=22.5,
+             width=16, height=16, dpi=1000, raster=T, save=T, save_svg=T)
+  
+  Pred_GCNPath_CCLE %>%
+    mutate(Pred_Error=abs(Prediction-LN_IC50),
+           LN_IC50_Var=abs(LN_IC50-LN_IC50_CCLE)) %>%
+    with(cor(Pred_Error, LN_IC50_Var)) %>% round(3) %>% print
+}
 
-Pred_GCNPath_N_CCLE$LN_IC50 %>% is.na %>% sum         # 0
-Pred_GCNPath_N_CCLE$LN_IC50_CCLE %>% is.na %>% sum    # 0
-Pred_GCNPath_N_CCLE$LN_IC50_CCLE %>% hist             # Almost 2.07944154 [Max 8uM]
+by = c("Cell", "Drug")
+xlab = bquote(Mean~ln(IC[50]))
+ylab = bquote(SD~ln(IC[50]))
+dir = mkdir("Analysis of Error")
+main = sprintf("%s/IC50_Mean & IC50_SD Relation [GDSC, %s]", dir, by)
 
+col = c("Drug", "Drug_Pathway", "IC50_Mean", "IC50_SD", "Num")
+IC50_Stat_Drug_ = IC50_Stat_Drug[, col]
+IC50_Stat_Drug_ %>% with(cor(IC50_Mean, IC50_SD)) %>% round(3)   # -0.45
+IC50_Stat_Drug_ %>% plot_def(IC50_Mean, IC50_SD, main=main[2], xlab=xlab, ylab=ylab, add=add,
+                             size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
 
-xlab = bquote(GDSC~ln(IC[50]))
-ylab = bquote(CCLE~ln(IC[50]))
+col = c("Cell", "Cell_TCGA", "IC50_Mean", "IC50_SD", "Num")
+IC50_Stat_Cell_ = IC50_Stat_Cell[, col]
+IC50_Stat_Cell_ %>% with(cor(IC50_Mean, IC50_SD)) %>% round(3)   # -0.407
+IC50_Stat_Cell_ %>% plot_def(IC50_Mean, IC50_SD, main=main[1], xlab=xlab, ylab=ylab, add=add,
+                             size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
 
-main = sprintf("%s/LN_IC50 [GDSC-CCLE] & Pred_Error (color)", dir)
+IC50_Stat_Drug_CCLE = IC50_CCLE %>% group_by(Drug) %>% 
+  summarise(Num=n(), IC50_Mean=mean(LN_IC50_CCLE), 
+            IC50_SD=sd(LN_IC50_CCLE)) %>% as.data.frame   # 24
 
-add = list(scale_color_gradient(low="beige", high="firebrick3"))
-midpoint = Pred_GCNPath_N_CCLE %>% with(abs(Prediction-LN_IC50)) %>% quantile(0.01)
-# add = list(scale_color_gradient2(low="beige", mid="lightyellow", high="firebrick3"))
+IC50_Stat_Cell_CCLE = IC50_CCLE %>% group_by(Cell) %>% 
+  summarise(Num=n(), IC50_Mean=mean(LN_IC50_CCLE), 
+            IC50_SD=sd(LN_IC50_CCLE)) %>% as.data.frame   # 504
 
-Pred_GCNPath_N_CCLE %>% 
-  mutate(Pred_Error=abs(Prediction-LN_IC50)) %>% 
-  plot_def(LN_IC50, LN_IC50_CCLE, color=Pred_Error, 
-           main=main, xlab=xlab, ylab=ylab, size=2.5, alpha=0.8, 
-           legend="|Error|", color_line="red", add=add,
-           axis_tl=30, axis_tx=24, legend_tl=20, legend_tx=20, margin_lg=0.4,
-           width=20, height=16.5, dpi=1200, xy_line=T, raster=T, save=T, save_svg=T)
+main = sprintf("%s/IC50_Mean & IC50_SD Relation [CCLE, %s]", dir, by)
+IC50_Stat_Drug_CCLE %>% with(cor(IC50_Mean, IC50_SD)) %>% round(3)   # -0.22
+IC50_Stat_Drug_CCLE %>% 
+  plot_def(IC50_Mean, IC50_SD, main=main[2], xlab=xlab, ylab=ylab, add=add,
+           size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
 
-xlab = bquote("|"~GDSC~ln(IC[50]) - " " * CCLE~ln(IC[50])~"|")
-ylab = bquote("|"~GDSC~ln(IC[50]) - " " * Prediction~"|")
-main = sprintf("%s/LN_IC50 [GDSC-CCLE] & Pred_Error (no color)", dir)
-
-Pred_GCNPath_N_CCLE %>% 
-  mutate(Pred_Error=abs(Prediction-LN_IC50), 
-         LN_IC50_Var=abs(LN_IC50-LN_IC50_CCLE)) %>% 
-  plot_def(LN_IC50_Var, Pred_Error, main=main, xlab=xlab, ylab=ylab, 
-           size=2.5, alpha=0.5, axis_tl=22.5, axis_tx=22.5, 
-           width=16, height=16, dpi=1500, raster=T, save=T, save_svg=T)
-
-Pred_GCNPath_N_CCLE %>% 
-  mutate(Pred_Error=abs(Prediction-LN_IC50), 
-         LN_IC50_Var=abs(LN_IC50-LN_IC50_CCLE)) %>% 
-  with(cor(Pred_Error, LN_IC50_Var)) %>% round(3)   # 0.144 [n=5567]
+IC50_Stat_Cell_CCLE %>% with(cor(IC50_Mean, IC50_SD)) %>% round(3)   # -0.241
+IC50_Stat_Cell_CCLE %>% 
+  plot_def(IC50_Mean, IC50_SD, main=main[1], xlab=xlab, ylab=ylab, add=add,
+           size=2, alpha=0.5, axis_tl=30, axis_tx=24, save=T)
 
 
 
 supplementary = T
 if (supplementary) {
-  
   save_for_nc = function(df_list, dir=".", num=1, num_fig=NULL, rowNames=F, suppl=T) {
-    
     suppressMessages(library(openxlsx))
     is_list = inherits(df_list, "list")
     if (is_list & is.null(num_fig)) num_fig = letters[1:length(df_list)]
@@ -1194,7 +1043,6 @@ if (supplementary) {
   }
   
   process_utest = function(Perf_UTest, score="RMSE") {
-    
     score_ = sprintf("_%s", score)
     col_rm = c("RMSE", "PCC", "SCC") %>% setdiff(score)
     
@@ -1212,6 +1060,26 @@ if (supplementary) {
     
     Perf_UTest_List = list(Perf_UTest_N, Perf_UTest_C, Perf_UTest_D, Perf_UTest_S)
     return(Perf_UTest_List)
+  }
+  
+  col = c("MODEL_NAME", "SANGER_MODEL_ID")
+  col_ = c("Cell_Name", "Cell_SANGER_ID")
+  Anno_Cells_ = Anno_Cells[, col] %>% setNames(col_) %>% 
+    subset(!is.na(Cell_SANGER_ID)) %>% distinct(Cell_SANGER_ID, .keep_all=T) %>% as.data.frame
+  
+  col = c("Name", "Drug_CID")
+  col_ = c("Drug_Name", "Drug_CID")
+  Anno_Drugs_ = Anno_Drugs[, col] %>% setNames(col_) %>% 
+    subset(!is.na(Drug_CID)) %>% distinct(Drug_CID, .keep_all=T) %>% as.data.frame
+  
+  test_type_ = c("Unblinded", "Cell_Blind", "Drug_Blind", "Strict_Blind")
+  
+  ### [Source Data] Supplementary Fig. 4-7
+  if (save_pred) {
+    Pred_U %>% save_for_nc(num=4, suppl=T)
+    Pred_C %>% save_for_nc(num=5, suppl=T)
+    Pred_D %>% save_for_nc(num=6, suppl=T)
+    Pred_S %>% save_for_nc(num=7, suppl=T)
   }
   
   ### [Source Data] Supplementary Fig. 8
@@ -1238,51 +1106,163 @@ if (supplementary) {
   Perf_UTest_SCC_ = Perf_UTest %>% process_utest(score="SCC")
   Perf_UTest_SCC_ %>% save_for_nc(num=13, suppl=T)
   
+  
+  ### [Source Data] Supplementary Fig. 14
+  Perf_Cell_TCGA_ = Perf_Cell_TCGA %>% 
+    subset(Dataset=="GDSC" & Test_Type %in% test_type[c(1, 2, 4)]) %>% 
+    mutate(Test_Type=ifelse(Test_Type!="Normal", Test_Type, "Unblinded")) %>% 
+    rename(TCGA_Code=Cell_TCGA) %>% subset(select=-Dataset)
+  
+  Perf_Cell_TCGA_ %>% save_for_nc(num=14, suppl=T)
+  
+  
+  ### [Source Data] Supplementary Fig. 15
+  Perf_Drug_Pathway_ = Perf_Drug_Pathway %>% 
+    subset(Dataset=="GDSC" & Test_Type %in% test_type[c(1, 3, 4)]) %>% 
+    mutate(Test_Type=ifelse(Test_Type!="Normal", Test_Type, "Unblinded")) %>% 
+    rename(Target_Pathway=Drug_Pathway) %>% subset(select=-Dataset)
+  
+  Perf_Drug_Pathway_ %>% save_for_nc(num=15, suppl=T)
+  
+  
+  ### [Source Data] Supplementary Fig. 16
+  Perf_Cell_ = Perf_Cell %>% 
+    subset(Model=="GCNPath" & Dataset=="GDSC" & Test_Type %in% test_type[c(1, 2, 4)]) %>% 
+    mutate(Test_Type=ifelse(Test_Type!="Normal", Test_Type, "Unblinded") %>% factor(levels=test_type_)) %>% 
+    arrange(Test_Type, Cell) %>% rename(Num_Test=N_Test) %>% subset(select=-c(Model, Dataset))
+  
+  by = c("Cell"="Cell_SANGER_ID")
+  Perf_Cell_ = Perf_Cell_ %>% 
+    left_join(Anno_Cells_, by=by) %>% 
+    rename(Cell_SANGER_ID=Cell, TCGA_Code=Cell_TCGA) %>% 
+    relocate(Cell_Name, .before=everything())
+  
+  Temp = list(Perf_Cell_ %>% subset(Test_Type==test_type_[1]) %>% subset(select=-Test_Type), 
+              Perf_Cell_ %>% subset(Test_Type==test_type_[2]) %>% subset(select=-Test_Type), 
+              Perf_Cell_ %>% subset(Test_Type==test_type_[4]) %>% subset(select=-Test_Type))
+  
+  Temp %>% save_for_nc(num=16, suppl=T)
+  
+  
   ### [Source Data] Supplementary Fig. 17
-  Perf_Cell_Corr_ = Perf_Cell_Corr %>% 
-    lapply(function(df) df[, 1:3] %>% 
-             rename(Model_X=Model1, Model_Y=Model2, PCC_of_RMSE=RMSE_Corr))
-  Perf_Cell_Corr_ %>% save_for_nc(num=17, suppl=T)
+  Perf_Drug_ = Perf_Drug %>% 
+    subset(Model=="GCNPath" & Dataset=="GDSC" & Test_Type %in% test_type[c(1, 3, 4)]) %>% 
+    mutate(Test_Type=ifelse(Test_Type!="Normal", Test_Type, "Unblinded") %>% factor(levels=test_type_)) %>% 
+    arrange(Test_Type, Drug) %>% rename(Num_Test=N_Test) %>% subset(select=-c(Model, Dataset))
+  
+  by = c("Drug"="Drug_CID")
+  Perf_Drug_ = Perf_Drug_ %>% 
+    left_join(Anno_Drugs_, by=by) %>% 
+    rename(Drug_CID=Drug, Target_Pathway=Drug_Pathway) %>% 
+    relocate(Drug_Name, .before=everything())
+  
+  Temp = list(Perf_Drug_ %>% subset(Test_Type==test_type_[1]) %>% subset(select=-Test_Type), 
+              Perf_Drug_ %>% subset(Test_Type==test_type_[3]) %>% subset(select=-Test_Type), 
+              Perf_Drug_ %>% subset(Test_Type==test_type_[4]) %>% subset(select=-Test_Type))
+  
+  Temp %>% save_for_nc(num=17, suppl=T)
+  
   
   ### [Source Data] Supplementary Fig. 18
-  Perf_Drug_Corr_ = Perf_Drug_Corr %>% 
-    lapply(function(df) df[, 1:3] %>% 
-             rename(Model_X=Model1, Model_Y=Model2, PCC_of_RMSE=RMSE_Corr))
-  Perf_Drug_Corr_ %>% save_for_nc(num=18, suppl=T)
+  Perf_Cell_TCGA_ = Perf_Cell_TCGA %>% 
+    subset(Dataset=="GDSC1" & Test_Type %in% test_type[c(1, 2, 4)]) %>% 
+    mutate(Test_Type=ifelse(Test_Type!="Normal", Test_Type, "Unblinded")) %>% 
+    rename(TCGA_Code=Cell_TCGA) %>% subset(select=-Dataset)
+  
+  Perf_Drug_Pathway_ = Perf_Drug_Pathway %>% 
+    subset(Dataset=="GDSC1" & Test_Type %in% test_type[c(1, 3, 4)]) %>% 
+    mutate(Test_Type=ifelse(Test_Type!="Normal", Test_Type, "Unblinded")) %>% 
+    rename(Target_Pathway=Drug_Pathway) %>% subset(select=-Dataset)
+  
+  Perf_GCNPath_GDSC1C_ = Perf_GCNPath_GDSC1C %>% rename(TCGA_Code=Cell_TCGA)
+  Perf_GCNPath_GDSC1D_ = Perf_GCNPath_GDSC1D %>% rename(Target_Pathway=Drug_Pathway)
+  
+  Temp = list(Perf_Cell_TCGA_, Perf_GCNPath_GDSC1C_, 
+              Perf_Drug_Pathway_, Perf_GCNPath_GDSC1D_)
+  
+  num_fig = c("a_top", "a_bottom", "b_top", "b_bottom")
+  Temp %>% save_for_nc(num=18, num_fig=num_fig, suppl=T)
   
   
   ### [Source Data] Supplementary Fig. 19
-  IC50_Stat_Cell_ = IC50_Stat_Cell %>% 
-    rename(Cancer_Type=Cell_TCGA, Num_Test=Num, 
-           LN_IC50_Mean=IC50_Mean, LN_IC50_SD=IC50_SD)
-  IC50_Stat_Drug_ = IC50_Stat_Drug %>% 
-    rename(Target_Pathway=Drug_Pathway, Num_Test=Num, 
-           LN_IC50_Mean=IC50_Mean, LN_IC50_SD=IC50_SD)
+  Perf_Cell_TCGA_ = Perf_Cell_TCGA %>% 
+    subset(Dataset=="GDSC2" & Test_Type %in% test_type[c(1, 2, 4)]) %>% 
+    mutate(Test_Type=ifelse(Test_Type!="Normal", Test_Type, "Unblinded")) %>% 
+    rename(TCGA_Code=Cell_TCGA) %>% subset(select=-Dataset)
   
-  IC50_Stat_Cell_Group_ = IC50_Stat_Cell_Group %>% 
-    rename(Cancer_Type=Cell_TCGA, Num_Test=Num, 
-           LN_IC50_Mean=IC50_Mean, LN_IC50_SD=IC50_SD)
-  IC50_Stat_Drug_Group_ = IC50_Stat_Drug_Group %>% 
-    rename(Target_Pathway=Drug_Pathway, Num_Test=Num, 
-           LN_IC50_Mean=IC50_Mean, LN_IC50_SD=IC50_SD)
+  Perf_Drug_Pathway_ = Perf_Drug_Pathway %>% 
+    subset(Dataset=="GDSC2" & Test_Type %in% test_type[c(1, 3, 4)]) %>% 
+    mutate(Test_Type=ifelse(Test_Type!="Normal", Test_Type, "Unblinded")) %>% 
+    rename(Target_Pathway=Drug_Pathway) %>% subset(select=-Dataset)
   
-  IC50_Stat_ = list(IC50_Stat_Drug_, IC50_Stat_Drug_Group_, 
-                    IC50_Stat_Cell_, IC50_Stat_Cell_Group_)
+  Perf_GCNPath_GDSC2C_ = Perf_GCNPath_GDSC2C %>% rename(TCGA_Code=Cell_TCGA)
+  Perf_GCNPath_GDSC2D_ = Perf_GCNPath_GDSC2D %>% rename(Target_Pathway=Drug_Pathway)
   
-  num_fig = c("a-c", "d", "e-g", "h")
-  IC50_Stat_ %>% save_for_nc(num=19, num_fig=num_fig, suppl=T)
+  Temp = list(Perf_Cell_TCGA_, Perf_GCNPath_GDSC2C_, 
+              Perf_Drug_Pathway_, Perf_GCNPath_GDSC2D_)
+  
+  num_fig = c("a_top", "a_bottom", "b_top", "b_bottom")
+  Temp %>% save_for_nc(num=19, num_fig=num_fig, suppl=T)
   
   
-  ### [Source Data] Supplementary Fig. 20
-  Pred_GCNPath_N_CCLE_ = Pred_GCNPath_N_CCLE %>% 
-    subset(select=-c(Model, Dataset, Test_Type, Cell_COSMIC, Cell_TCGA, Drug_Pathway)) %>% 
-    rename(Train_Fold=Fold, LN_IC50_GDSC=LN_IC50) %>% 
-    mutate(Diff_GDSC_Pred=abs(Prediction-LN_IC50_GDSC), 
-           Diff_GDSC_CCLE=abs(LN_IC50_CCLE-LN_IC50_GDSC)) %>% 
-    relocate(Train_Fold, .after=Drug) %>% 
-    relocate(Prediction, .after=LN_IC50_CCLE) %>% as.data.frame
+  ### [Source Data] Supplementary Fig. 23
+  Perf_Cell_Corr_ = Perf_Cell_Corr %>% 
+    lapply(function(df) df[, c(1, 2, 5)] %>% 
+             rename(Model_X=Model1, Model_Y=Model2, PCC_of_SCC=SCC_Corr))
+  Perf_Cell_Corr_ %>% save_for_nc(num=23, suppl=T)
   
-  Pred_GCNPath_N_CCLE_ %>% save_for_nc(num=20, suppl=T)
+  ### [Source Data] Supplementary Fig. 24
+  Perf_Drug_Corr_ = Perf_Drug_Corr %>% 
+    lapply(function(df) df[, c(1, 2, 5)] %>% 
+             rename(Model_X=Model1, Model_Y=Model2, PCC_of_SCC=SCC_Corr))
+  Perf_Drug_Corr_ %>% save_for_nc(num=24, suppl=T)
+  
+  
+  ### [Source Data] Supplementary Fig. 25
+  Stat_Cell_List_ = Stat_Cell_List[c(1, 2, 4)] %>%
+    lapply(function(df) df %>%
+             dplyr::rename(TCGA_Code=Cell_TCGA, Num_Test=Num,
+                           LN_IC50_Mean=IC50_Mean, LN_IC50_SD=IC50_SD,
+                           LN_IC50_Bimodality=IC50_Bimodality,
+                           LN_IC50_Coverage=IC50_Coverage))
+  
+  Stat_Drug_List_ = Stat_Drug_List[c(1, 3, 4)] %>%
+    lapply(function(df) df %>%
+             dplyr::rename(Target_Pathway=Drug_Pathway, Num_Test=Num,
+                           LN_IC50_Mean=IC50_Mean, LN_IC50_SD=IC50_SD,
+                           LN_IC50_Bimodality=IC50_Bimodality,
+                           LN_IC50_Coverage=IC50_Coverage))
+  
+  Stat_Cell_List_Group_ = Stat_Cell_List_Group[c(1, 2, 4)] %>%
+    lapply(function(df) df %>% dplyr::rename(TCGA_Code=Cell_TCGA, Num_Test=Num))
+  
+  Stat_Drug_List_Group_ = Stat_Drug_List_Group[c(1, 3, 4)] %>%
+    lapply(function(df) df %>% dplyr::rename(Target_Pathway=Drug_Pathway, Num_Test=Num))
+  
+  IC50_Stat_ = list(Stat_Drug_List_[[1]], Stat_Drug_List_Group_[[1]], 
+                    Stat_Drug_List_[[2]], Stat_Drug_List_Group_[[2]], 
+                    Stat_Drug_List_[[3]], Stat_Drug_List_Group_[[3]], 
+                    Stat_Cell_List_[[1]], Stat_Cell_List_Group_[[1]], 
+                    Stat_Cell_List_[[2]], Stat_Cell_List_Group_[[2]],
+                    Stat_Cell_List_[[3]], Stat_Cell_List_Group_[[3]])
+  
+  direction = c("left", "right")
+  num_fig = expand.grid(letters[1:6], direction) %>% arrange(Var1)
+  num_fig = num_fig %>% with(sprintf("%s_%s", Var1, Var2))
+  IC50_Stat_ %>% save_for_nc(num=25, num_fig=num_fig, suppl=T)
+  
+  
+  ### [Source Data] Supplementary Fig. 26
+  Stat_CCLE_List_ = Stat_CCLE_List %>% 
+    lapply(function(df) df %>% 
+             subset(select=-c(Model, Dataset, Test_Type, Cell_BROAD, Cell_COSMIC, Cell_TCGA, Drug_Pathway)) %>% 
+             rename(Train_Fold=Fold, LN_IC50_GDSC=LN_IC50) %>% 
+             mutate(Diff_GDSC_Pred=abs(Prediction-LN_IC50_GDSC), 
+                    Diff_GDSC_CCLE=abs(LN_IC50_CCLE-LN_IC50_GDSC)) %>% 
+             relocate(Train_Fold, .after=Drug) %>% 
+             relocate(Prediction, .after=LN_IC50_CCLE) %>% as.data.frame)
+  
+  Stat_CCLE_List_ %>% save_for_nc(num=26, suppl=T)
   
   
   ### [Source Data] Fig. 3

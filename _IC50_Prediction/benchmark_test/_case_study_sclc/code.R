@@ -19,18 +19,7 @@ dir = "../../processed_data/cell_data/SANGER_Passports"
 file = sprintf("%s/TPM_Sym.csv", dir)
 SANGER_RNA_TPM = fread_def(file)
 
-# dir = "../../processed_data/cell_data/SANGER_Passports"
-# file = sprintf("%s/Anno_Cells.csv", dir)
-# Anno_Cells = read.csv(file)
-# Anno_Cells$TCGA_CODE[is.na(Anno_Cells$TCGA_CODE)] = "UNCLASSIFIED"
-
-# dir = "../../processed_data/drug_data/GDSC"
-# file = sprintf("%s/Anno_Drugs.csv", dir)
-# Anno_Drugs = read.csv(file)
-# Anno_Drugs$Drug_CID = Anno_Drugs$Drug_CID %>% as.character
-# Anno_Drugs$Target_Pathway[is.na(Anno_Drugs$Target_Pathway)] = "Unclassified"
-
-dir = "../../project/_Liu_Qian_2024/"
+dir = "../../project/_Liu_Qian_2024"
 file = sprintf("%s/1-s2.0-S0092867423013351-mmc6.xlsx", dir)
 SubType = read.xlsx(file, sheet="Table S6A")
 
@@ -62,28 +51,17 @@ dir = "../GCNPath/results/IC50_GDSC/Normal/RGCN"
 Pred_GCNPath = read_pred(dir, pattern=pattern)   # 12840 [214*6*10]
 Pred_GCNPath$Model = "GCNPath"
 
-
+Anno_Drugs_SCLC = Pred_GCNPath[, c("Drug", "Drug_CID")] %>% distinct
 Pred_List = list(Pred_TGSA_SG, Pred_DRPreter_SG, Pred_GCNPath)
 Pred_List = Reduce(rbind, Pred_List)   # 38520 [214*6*3*10]
 
-Pred_List = Pred_List %>% group_by(Sample, Drug, Model) %>% 
-  summarise(Prediction=mean(Prediction)) %>% as.data.frame   # 3852 [214*6*3]
+Pred_List = Pred_List %>% 
+  group_by(Sample, Drug, Model) %>% 
+  mutate(Prediction=mean(Prediction)) %>% 
+  select(-Seed) %>% distinct %>% as.data.frame   # 3852 [214*6*3]
 
-idx = match(Pred_List$Sample, SubType$Sample)
-Pred_List$Status = SubType$Status[idx]
-
-# drugs = Pred_List$Drug %>% unique
-# models = Pred_List$Model %>% unique
-# dir = mkdir("Boxplot per Subtypes")
-# 
-# for (model in models) {
-#   for (drug in drugs) {
-#     main = sprintf("%s/Boxplot per SCLC Subtypes [%s, %s]", dir, model, drug)
-#     Pred_List %>% subset(Model==model & Drug==drug) %>% 
-#       boxplot_subtype(SubType, col_tn="Status", main=main, save=T)
-#   }
-# }
-
+drugs = Pred_List$Drug %>% unique
+models = Pred_List$Model %>% unique
 
 Pred_List_TN = Pred_List %>% 
   mutate(Group=gsub("[T, N]", "", Sample)) %>% 
@@ -116,16 +94,40 @@ theme_lg = theme(legend.position="bottom",
 
 add = list(hline, theme_lg, scale_fill_manual(labels=labels, values=color))
 
-ylab = "△Pred [Tumor-Normal]"
-dir = mkdir("Boxplot per Subtypes [Tumor-Normal, ComBat X]")
+# Visualization of Ground-Truth
+subtype_truth = list(c("NMF1", "NMF3"), 
+                     c("NMF1", "NMF4"), 
+                     c("NMF1", "NMF4"), 
+                     c("NMF1", "NMF4"))
 
-for (drug in drugs) {
-  main = sprintf("%s/Boxplot per SCLC Subtypes [%s]", dir, drug)
-  Pred_List_TN %>% subset(Drug==drug) %>% 
-    boxplot_def(Subtype, Diff_Pred, fill=Model, main=main, 
-                add=add, ylab=ylab, alpha=0.9, width=17.1, 
+names(subtype_truth) = c("Anlotinib", "Alisertib", "Barasertib", "AMG-900")
+
+col = c("Subtype", "Drug")
+subtype_truth_ = subtype_truth %>% stack %>% setNames(col)
+dir = mkdir("Boxplot of Prediction per Drug [ComBat X (Ground Truth)]")
+
+for (i in 1:length(subtype_truth)) {
+  drug = names(subtype_truth)
+  
+  ylab = "△Pred [Tumor-Normal]"
+  main = sprintf("%s/Boxplot of Tumor-Normal [%s]", dir, drug)
+  
+  Pred_List_TN %>% 
+    subset(Drug==drug & Subtype %in% subtype_truth[[i]]) %>%
+    boxplot_def(Subtype, Diff_Pred, fill=Model, main=main,
+                add=add, ylab=ylab, alpha=0.9, width=15,
+                axis_tl=18, axis_tx=18, legend_tl=12, legend_tx=12, save=T)
+  
+  ylab = bquote(Predicted~ln(IC[50]))
+  main = sprintf("%s/Boxplot of Tumor [%s]", dir, drug)
+  
+  Pred_List_TN %>% 
+    subset(Drug==drug & Subtype %in% subtype_truth[[i]]) %>%
+    boxplot_def(Subtype, Pred_Tumor, fill=Model, main=main,
+                add=add[-1], ylab=ylab, alpha=0.9, width=18,
                 axis_tl=18, axis_tx=18, legend_tl=15, legend_tx=15, save=T)
 }
+
 
 
 
@@ -145,15 +147,13 @@ dir = "../GCNPath/results/IC50_GDSC/Normal/RGCN"
 Pred_GCNPath_CB = read_pred(dir, pattern=pattern)   # 12840 [214*6*10]
 Pred_GCNPath_CB$Model = "GCNPath"
 
-
 Pred_List_CB = list(Pred_TGSA_SG_CB, Pred_DRPreter_SG_CB, Pred_GCNPath_CB)
 Pred_List_CB = Reduce(rbind, Pred_List_CB)   # 38520 [214*6*3*10]
 
-Pred_List_CB = Pred_List_CB %>% group_by(Sample, Drug, Model) %>% 
-  summarise(Prediction=mean(Prediction)) %>% as.data.frame   # 3852 [214*6*3]
-
-idx = match(Pred_List_CB$Sample, SubType$Sample)
-Pred_List_CB$Status = SubType$Status[idx]
+Pred_List_CB = Pred_List_CB %>% 
+  group_by(Sample, Drug, Model) %>% 
+  mutate(Prediction=mean(Prediction)) %>% 
+  select(-Seed) %>% distinct %>% as.data.frame   # 3852 [214*6*3]
 
 
 Pred_List_TN_CB = Pred_List_CB %>% 
@@ -173,38 +173,29 @@ Pred_List_TN_CB = Pred_List_TN_CB %>%
   subset(select=-c(Group, Status)) %>% 
   rename(Pred_Tumor=Tumor, Pred_Normal=Normal)
 
-margin1 = margin(0, 0.25, 0, 0.25, unit="cm")
-margin2 = margin(0, 0.125, 0, 0.125, unit="cm")
+dir = mkdir("Boxplot of Prediction per Drug [ComBat O (Ground Truth)]")
 
-theme_lg = theme(legend.position="bottom",
-                 legend.key.size=unit(0.8, 'cm'),
-                 legend.title=element_text(margin=margin1), 
-                 legend.text=element_text(margin=margin2))
-
-add = list(hline, theme_lg, scale_fill_manual(labels=labels, values=color))
-
-ylab = "△Pred [Tumor-Normal]"
-dir = mkdir("Boxplot per Subtypes [Tumor-Normal, ComBat O]")
-
-for (drug in drugs) {
-  main = sprintf("%s/Boxplot per SCLC Subtypes [%s]", dir, drug)
-  Pred_List_TN_CB %>% subset(Drug==drug) %>% 
-    boxplot_def(Subtype, Diff_Pred, fill=Model, main=main, 
-                add=add, ylab=ylab, alpha=0.9, width=17.1, 
+for (i in 1:length(drugs)) {
+  drug = names(subtype_truth)
+  
+  ylab = "△Pred [Tumor-Normal]"
+  main = sprintf("%s/Boxplot of Tumor-Normal [%s]", dir, drug)
+  
+  Pred_List_TN_CB %>% 
+    subset(Drug==drug & Subtype %in% subtype_truth[[i]]) %>%
+    boxplot_def(Subtype, Diff_Pred, fill=Model, main=main,
+                add=add, ylab=ylab, alpha=0.9, width=15,
+                axis_tl=18, axis_tx=18, legend_tl=12, legend_tx=12, save=T)
+  
+  ylab = bquote(Predicted~ln(IC[50]))
+  main = sprintf("%s/Boxplot of Tumor [%s]", dir, drug)
+  
+  Pred_List_TN_CB %>% 
+    subset(Drug==drug & Subtype %in% subtype_truth[[i]]) %>%
+    boxplot_def(Subtype, Pred_Tumor, fill=Model, main=main,
+                add=add[-1], ylab=ylab, alpha=0.9, width=18,
                 axis_tl=18, axis_tx=18, legend_tl=15, legend_tx=15, save=T)
 }
-
-
-# subtypes = SubType$Subtype %>% unique %>% sort
-# dir = mkdir("Boxplot per Subtypes [Tumor-Normal, ComBat O (by SubType)]")
-# 
-# for (subtype in subtypes) {
-#   main = sprintf("%s/Boxplot per SCLC Subtypes [%s]", dir, subtype)
-#   Pred_List_TN_CB %>% subset(Subtype==subtype) %>% 
-#     boxplot_def(Drug, Diff_Pred, fill=Model, main=main, 
-#                 add=add, ylab=ylab, alpha=0.9, width=20, 
-#                 axis_tl=20, axis_tx=18, legend_tl=18, legend_tx=15, save=T)
-# }
 
 
 
@@ -215,11 +206,15 @@ pattern_prot = "pred_liu24_invivo_prot_seed([0-9]+).csv"
 dir = "../GCNPath/results/IC50_GDSC/Normal/RGCN"
 Pred_GCNPath_Prot = read_pred(dir, pattern=pattern_prot)   # 12840 [214*6*10]
 
-Pred_GCNPath = Pred_GCNPath %>% group_by(Sample, Drug, Model) %>% 
-  summarise(Prediction=mean(Prediction)) %>% as.data.frame   # 1284 [214*6]
+Pred_GCNPath = Pred_GCNPath %>%
+  group_by(Sample, Drug, Model) %>%
+  mutate(Prediction=mean(Prediction)) %>%
+  select(-Seed) %>% distinct %>% as.data.frame   # 1284 [214*6]
 
-Pred_GCNPath_Prot = Pred_GCNPath_Prot %>% group_by(Sample, Drug, Model) %>% 
-  summarise(Prediction=mean(Prediction)) %>% as.data.frame   # 1284 [214*6]
+Pred_GCNPath_Prot = Pred_GCNPath_Prot %>% 
+  group_by(Sample, Drug, Model) %>% 
+  mutate(Prediction=mean(Prediction)) %>% 
+  select(-Seed) %>% distinct %>% as.data.frame   # 1284 [214*6]
 
 Pred_GCNPath$Model = "GCNPath_TPM"
 Pred_GCNPath_Prot$Model = "GCNPath_Proteome"
@@ -241,6 +236,12 @@ Pred_GCNPath_$Corr_TPM_Prot = Corr_TPM_Pt$Corr[idx]
 Pred_GCNPath_ = Pred_GCNPath_ %>% 
   dplyr::rename(Pred_TPM=GCNPath_TPM, Pred_Proteome=GCNPath_Proteome)
 
+idx = match(Pred_GCNPath_$Sample, SubType$Sample)
+Pred_GCNPath_ = Pred_GCNPath_ %>% 
+  mutate(Subtype=SubType$Subtype[idx]) %>% 
+  relocate(Subtype, .after=Sample)
+
+
 xlab = "Prediction with TPM"
 ylab = "Prediction with Proteome"
 legend = bquote(Corr["(TPM, Proteome)"])
@@ -249,12 +250,15 @@ add = list(scale_color_gradient(low="yellow", high="firebrick1"))
 main = "Prediction [TPM & Proteome]"
 
 Pred_GCNPath_ %>% 
+  right_join(subtype_truth_) %>% 
   plot_def(Pred_TPM, Pred_Proteome, color=Corr_TPM_Prot, 
            shape=Drug, main=main, add=add, alpha=0.5, 
            xlab=xlab, ylab=ylab, legend=legend, xy_line=T, 
-           axis_tl=24, axis_tx=24, width=20, save=T)
+           axis_tl=27, axis_tx=27, legend_tl=18, legend_tx=16.5, width=20, save=T)
 
-Pred_GCNPath_ %>% with(cor(Pred_Proteome, Pred_TPM))   # 0.8833926
+Pred_GCNPath_ %>%
+  right_join(subtype_truth_) %>% 
+  with(cor(Pred_Proteome, Pred_TPM))   # 0.8741409
 
 dir = "../GCNPath/processed/cell_data_biocarta"
 file1 = sprintf("%s/Liu24_invivo_RNA_GSVA.csv", dir)
@@ -365,6 +369,7 @@ Ex_GSVA %>% plot_def(TPM, Proteome, main=main,
 
 
 
+
 supplementary = T
 if (supplementary) {
   save_for_nc = function(df_list, dir=".", num=1, num_fig=NULL, rowNames=F, suppl=T) {
@@ -392,26 +397,35 @@ if (supplementary) {
   Pred_In_Vitro = read.csv(file)
   
   models = c("TGDRP_SG", "DRPreter_SG", "GCNPath")
-  drugs = c("Etoposide", "Cisplatin", "Anlotinib", "Alisertib", "Barasertib", "AMG-900")
+  subtypes_ = c("NMF1", "NMF3", "NMF4")
+  drugs_ = c("Anlotinib", "Alisertib", "Barasertib", "AMG-900")
   
   Pred_List_TN_ = Pred_List_TN %>% 
+    right_join(subtype_truth_) %>% 
     mutate(Model=Model %>% factor(levels=models), 
-           Drug=Drug %>% factor(levels=drugs)) %>% arrange(Model, Drug, Sample)
+           Drug=Drug %>% factor(levels=drugs_), 
+           Subtype=Subtype %>% factor(levels=subtypes_)) %>% 
+    arrange(Model, Drug, Sample)
   
-  Pred_GCNPath_ = Pred_GCNPath_ %>% arrange(desc(Corr_TPM_Prot))
+  Pred_GCNPath_2 = Pred_GCNPath_ %>% 
+    right_join(subtype_truth_) %>% 
+    arrange(desc(Corr_TPM_Prot)) %>% as.data.frame
   Corr_TPM_Pt_ = Corr_TPM_Pt %>% arrange(desc(PCC_GSVA))
   
   Temp = list(Pred_In_Vitro, Pred_List_TN_, 
-              Pred_GCNPath_, Corr_TPM_Pt_, Ex_Raw, Ex_GSVA)
+              Pred_GCNPath_2, Corr_TPM_Pt_, Ex_Raw, Ex_GSVA)
   
-  num_fig = c("a", "b", "c1", "c2", "c3", "c4")
+  num_fig = c("a", "b", "c-1", "c-2", "c-3", "c-4")
   Temp %>% save_for_nc(num=8, suppl=F, num_fig=num_fig)
   
   
   ### [Source Data] Supplementary Fig. 37
   Pred_List_TN_CB_ = Pred_List_TN_CB %>% 
+    right_join(subtype_truth_) %>% 
     mutate(Model=Model %>% factor(levels=models), 
-           Drug=Drug %>% factor(levels=drugs)) %>% arrange(Model, Drug, Sample)
+           Drug=Drug %>% factor(levels=drugs_), 
+           Subtype=Subtype %>% factor(levels=subtypes_)) %>% 
+    arrange(Model, Drug, Sample)
   
   Pred_List_TN_CB_ %>% save_for_nc(num=37, suppl=T)
 }

@@ -176,14 +176,16 @@ plot_perf_pre = function(Perf_Pretrain, y="RMSE", axis_tl=24, axis_tx=18,
   font4 = font(object="legend.text", size=legend_tx, margin=margin4)
   font = font1 + font2 + font3 + font4
   
+  pos = position_dodge(0.8)
   font_text = element_text(size=7.2)
   # ymax = max(Perf_Pretrain[[y]]) + 0.2
   color = RColorBrewer::brewer.pal(8, "Reds")[c(8, 6, 2)]
   main = sprintf("Performance [Barplot, %s]", y)
   
   pl = Perf_Pretrain %>% 
-    ggbarplot(x="Model", y=y, color="black", fill="Dataset",
-              xlab=F, add="mean_se", position=position_dodge(0.8), legend="right") + 
+    ggbarplot(x="Model", y=y, color="black", 
+              fill="Dataset", add.params=list(alpha=0.5, width=0.5),
+              xlab=F, add=c("mean_se", "point"), position=pos, legend="right") + 
     theme(text=font_text) + font + rotate_x_text(36) + scale_fill_manual(values=color)
   
   pl = pl %>% ggpar(legend="bottom")
@@ -199,7 +201,6 @@ plot_perf_pre = function(Perf_Pretrain, y="RMSE", axis_tl=24, axis_tx=18,
 }
 
 perf_avg_sd = function(Perf_Avg, stat="RMSE", space_cols=F) {
-  
   avg_plus_sd = function(x_mean, x_sd) sprintf("%.3f±%.3f", x_mean, x_sd)
   Perf_Fold_Avg = Perf_Fold %>% acast(Model~Test, value.var=stat, fun.aggregate=mean)
   Perf_Fold_SD = Perf_Fold %>% acast(Model~Test, value.var=stat, fun.aggregate=sd)
@@ -243,52 +244,58 @@ plot_pred = function(Pred, model=NULL, dir=NULL, width=15, height=15) {
   corr = Pred %>% with(cor(LN_IC50, Prediction)) %>% round(3)
   sprintf("# N=%s, RMSE=%.3f, PCC=%.3f", nrow(Pred), rmse, corr) %>% print
   
-  Pred %>% plot_def(LN_IC50, Prediction, main=main, xlab=xlab, ylab=ylab,
-                    size=1.5, alpha=0.25, force_bold=F, axis_tl=30, axis_tx=24, dpi=1200,
-                    width=width, height=height, xy_line=T, raster=T, save=T, save_svg=T)
+  # Pred %>% plot_def(LN_IC50, Prediction, main=main, xlab=xlab, ylab=ylab,
+  #                   size=1.5, alpha=0.25, force_bold=F, axis_tl=30, axis_tx=24, dpi=1200,
+  #                   width=width, height=height, xy_line=T, raster=T, save=T, save_svg=T)
+  
+  col = c("Cell", "Drug", "Prediction")
+  Pred = Pred[, col, with=F]
+  setkey(Pred, Cell, Drug)
+  return(Pred)
 }
 
+Pred_List = list()
 dir = mkdir("Prediction [GSDC]")
 
 # PaccMann_MSE
 # N=150204, RMSE=2.074, PCC=0.642
-Pred_PaccMann$Pred %>%
+Pred_List[["PaccMann_MSE"]] = Pred_PaccMann$Pred %>%
   subset(Dataset=="GDSC" & Weight=="best_mse_paccmann_v2") %>% 
   plot_pred(model="PaccMann_MSE", dir=dir)
 
 # PaccMann_PCC
 # N=150204, RMSE=2.089, PCC=0.641
-Pred_PaccMann$Pred %>%
+Pred_List[["PaccMann_PCC"]] = Pred_PaccMann$Pred %>%
   subset(Dataset=="GDSC" & Weight=="best_pearson_paccmann_v2") %>% 
   plot_pred(model="PaccMann_PCC", dir=dir)
 
 # GraphDRP
 # N=371803, RMSE=2.074, PCC=0.679
-Pred_GraphDRP$Pred %>%
+Pred_List[["GraphDRP"]] = Pred_GraphDRP$Pred %>%
   subset(Dataset=="GDSC") %>% 
   plot_pred(model="GraphDRP", dir=dir)
 
 # TGDRP
 # N=269519, RMSE=2.447, PCC=0.510
-Pred_TGDRP$Pred %>%
+Pred_List[["TGDRP"]] = Pred_TGDRP$Pred %>%
   subset(Dataset=="GDSC" & Model=="TGDRP") %>%
   plot_pred(model="TGDRP", dir=dir)
 
 # TGDRP_Pre
 # N=269519, RMSE=2.404, PCC=0.501
-Pred_TGDRP$Pred %>%
+Pred_List[["TGDRP_Pre"]] = Pred_TGDRP$Pred %>%
   subset(Dataset=="GDSC" & Model=="TGDRP_Pre") %>%
   plot_pred(model="TGDRP_Pre", dir=dir)
 
 # TGSA
 # N=269519, RMSE=2.386, PCC=0.497
-Pred_TGSA$Pred %>%
+Pred_List[["TGSA"]] = Pred_TGSA$Pred %>%
   subset(Dataset=="GDSC" & Model=="TGSA") %>%
   plot_pred(model="TGSA", dir=dir)
 
 # TGSA_Pre
 # N=269519, RMSE=2.408, PCC=0.526
-Pred_TGSA$Pred %>%
+Pred_List[["TGSA_Pre"]] = Pred_TGSA$Pred %>%
   subset(Dataset=="GDSC" & Model=="TGSA_Pre") %>%
   plot_pred(model="TGSA_Pre", dir=dir)
 
@@ -298,7 +305,7 @@ seed_best = Pred_DRPreter$Perf %>%
   subset(Dataset=="GDSC") %>% 
   subset(RMSE==min(RMSE)) %>% pull(Weight)   # Seed 4001
 
-Pred_DRPreter$Pred %>%
+Pred_List[["DRPreter"]] = Pred_DRPreter$Pred %>%
   subset(Dataset=="GDSC" & Weight==seed_best) %>%
   plot_pred(model="DRPreter", dir=dir)
 
@@ -306,25 +313,58 @@ Pred_DRPreter$Pred %>%
 # Prediction
 save_pred = T
 if (save_pred) {
-  rbind_perf = function(Perf1, Perf2, col=NULL) {
-    if (is.null(col)) col = intersect(colnames(Perf1), colnames(Perf2))
-    if (is.data.table(Perf1) & is.data.table(Perf2)) {
-      Perf = rbind(Perf1[, col, with=F], Perf2[, col, with=F])
-    } else Perf = rbind(Perf1[, col], Perf2[, col])
-    return(Perf)
+  pred_to_wide = function(Pred_List, IC50_GDSC) {
+    models = Pred_List %>% names
+    long_dt <- rbindlist(
+      lapply(models, function(model) {
+        dt <- Pred_List[[model]][, .(Cell, Drug, Prediction)]
+        dt[, Model := model]
+        dt
+      }), use.names = T
+    )
+    
+    setkey(long_dt, Cell, Drug)
+    long_dt = dcast(
+      long_dt,
+      Cell + Drug ~ Model,
+      value.var = "Prediction"
+    )
+    
+    setcolorder(long_dt, c("Cell", "Drug", models))
+    if (!is.null(IC50_GDSC)) {
+      long_dt = IC50_GDSC[long_dt]
+    }
+    
+    return(long_dt)
   }
   
-  Pred_List = list()
-  model_names = c("PaccMann", "GraphDRP", "TGDRP", "TGSA", "DRPreter")
+  dir = "../GCNPath/data/ic50_data"
+  file = sprintf("%s/IC50_GDSC.txt", dir)
+  IC50_GDSC_ = fread(file, sep="\t")
   
-  pred_names = sprintf("Pred_%s", model_names)
-  for (i in 1:length(model_names)) Pred_List[[i]] = get(pred_names[i])$Pred
-  Pred_List = Reduce(rbind_perf, Pred_List)   # 9955304 x 7
+  setkey(IC50_GDSC_, Cell, Drug)
+  IC50_GDSC_ = IC50_GDSC_[, .(Cell, Drug, LN_IC50)]
+  Pred_ = pred_to_wide(Pred_List, IC50_GDSC_)
   
-  file = "Prediction [GDSC, Pre-trained Model].csv"
-  fwrite(Pred_List, file=file, row.names=F)
-  
-  rm(Pred_List) ; gc()
+  # rbind_perf = function(Perf1, Perf2, col=NULL) {
+  #   if (is.null(col)) col = intersect(colnames(Perf1), colnames(Perf2))
+  #   if (is.data.table(Perf1) & is.data.table(Perf2)) {
+  #     Perf = rbind(Perf1[, col, with=F], Perf2[, col, with=F])
+  #   } else Perf = rbind(Perf1[, col], Perf2[, col])
+  #   return(Perf)
+  # }
+  # 
+  # Pred_List = list()
+  # model_names = c("PaccMann", "GraphDRP", "TGDRP", "TGSA", "DRPreter")
+  # 
+  # pred_names = sprintf("Pred_%s", model_names)
+  # for (i in 1:length(model_names)) Pred_List[[i]] = get(pred_names[i])$Pred
+  # Pred_List = Reduce(rbind_perf, Pred_List)   # 9955304 x 7
+  # 
+  # file = "Prediction [GDSC, Pre-trained Model].csv"
+  # fwrite(Pred_List, file=file, row.names=F)
+  # 
+  # rm(Pred_List) ; gc()
 }
 
 
@@ -581,14 +621,18 @@ if (supplementary) {
     write.xlsx(df_list, file=file, sheetName=sheets, rowNames=rowNames)
   }
   
-  ### [Source Data] Supplementary Fig. 17
+  ### [Source Data] Supplementary Fig. 20
   Test_Corr_Pre_ = Test_Corr_Pre_ %>% 
     rename(PCC_Cell_RMSE=Corr_Cell_RMSE, PCC_Drug_RMSE=Corr_Drug_RMSE)
-  Test_Corr_Pre_ %>% save_for_nc(num=17, suppl=T)
+  Test_Corr_Pre_ %>% save_for_nc(num=20, suppl=T)
   
-  ### [Source Data] Supplementary Fig. 18
+  ### [Source Data] Supplementary Fig. 21
   Perf_Pretrain_ = Perf_Pretrain %>% rename(Num_Test=N_Test) %>% 
     mutate(Dataset=recode(Dataset, "GDSC"="GDSC1+2"))
-  Perf_Pretrain_ %>% save_for_nc(num=18, suppl=T)
+  Perf_Pretrain_ %>% save_for_nc(num=21, suppl=T)
+  
+  ### [Source Data] Supplementary Fig. 22
+  if (save_pred) {
+    Pred_ %>% save_for_nc(num=22, suppl=T)
+  }
 }
-

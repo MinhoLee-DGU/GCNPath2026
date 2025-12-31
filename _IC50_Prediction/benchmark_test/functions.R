@@ -182,7 +182,7 @@ grep_def = function(x, words, and=T, not=F) {
   return(x)
 }
 
-text_repel_def = function(df, label, label_row=F, rectangle=F,
+text_repel_def = function(df=NULL, label=NULL, label_row=F, rectangle=F,
                           direction="both", size=4, force=1, overlap=10, ...) {
   
   suppressMessages(library(ggrepel))
@@ -233,6 +233,32 @@ set_margin_lg = function(margin_lg, pos_legend=NULL, ratio_title=2.5) {
   return(list(margin_lgl, margin_lgx))
 }
 
+set_theme = function(plot_tl=22.5, axis_tl=18, axis_tx=15, 
+                     text_tx=15, legend_tl=10, legend_tx=10, 
+                     angle_x=NULL, hjust_x=NULL, vjust_x=NULL,
+                     margin=0.5, margin_pl=0.25, margin_lg=0.4, pos_legend=NULL, 
+                     plot_face="plain", axis_face="plain", legend_face="plain", text_face="plain") {
+  
+  e_text = element_text
+  margin_pl = unit(rep(margin_pl, 4), units="cm")
+  margin_x = margin(t=margin, b=margin, unit="cm")
+  margin_y = margin(l=margin, r=margin, unit="cm")
+  
+  if (is.numeric(margin_lg)) margin_lg = set_margin_lg(margin_lg, pos_legend, ratio_title=2.5)
+  margin_lgl = margin_lg[[1]]
+  margin_lgx = margin_lg[[-1]]
+  
+  theme(plot.margin = margin_pl,
+        plot.title = e_text(size=plot_tl, face=plot_face, hjust=0.5),
+        axis.title = e_text(size=axis_tl, face=axis_face, hjust=0.5), 
+        axis.text.x = e_text(size=axis_tx, face=axis_face, margin=margin_x, 
+                             angle=angle_x, vjust=vjust_x, hjust=hjust_x), 
+        axis.text.y = e_text(size=axis_tx, face=axis_face, margin=margin_y), 
+        legend.title = e_text(size=legend_tl, face=legend_face, margin=margin_lgl),
+        legend.text = e_text(size=legend_tx, face=legend_face, margin=margin_lgx),
+        plot.caption = e_text(size=text_tx, face=text_face), legend.position = pos_legend)
+}
+
 save_fig = function(pl, main, width, height, dpi=400, svg=F, ggplot=T, ...) {
   
   main = gsub("\n", " ", main)
@@ -242,6 +268,7 @@ save_fig = function(pl, main, width, height, dpi=400, svg=F, ggplot=T, ...) {
   if (ggplot) {
     ggsave(file_png, pl, width=width, height=height, dpi=dpi,...)
   } else {
+    # Call png function first if ggplot=F
     png(file_png, width=width, height=height, units="cm", res=dpi)
     grid::grid.newpage()
     grid::grid.draw(pl$gtable)
@@ -250,8 +277,7 @@ save_fig = function(pl, main, width, height, dpi=400, svg=F, ggplot=T, ...) {
   
   if (svg) {
     if (ggplot) {
-      ggsave(file_svg, pl, width=width/2.54, height=height/2.54, 
-             dpi=dpi, device=grDevices::svg, family="sans")
+      ggsave(file_svg, pl, width=width/2.54, height=height/2.54, device="svg")
     } else {
       grDevices::svg(file_svg, width=width/2.54, height=height/2.54, family="sans")
       grid::grid.newpage()
@@ -378,9 +404,9 @@ hist_def = function(df, x=NULL, main=NULL, breaks=NULL, scale_x=NULL,
 plot_def = function(df, x, y, main=NULL, xlab=NULL, ylab=NULL, xlim=NULL, ylim=NULL, legend=NULL, 
                     text=NULL, add=NULL, color="black", shape=NULL, color_line="red", size=1, alpha=1, stroke=1,
                     plot_tl=22.5, axis_tl=18, axis_tx=15, legend_tl=16.5, legend_tx=15, 
-                    margin=0.5, margin_pl=0.25, margin_lg=0.4, width=15, height=15, dpi=400, text_ratio=1,
+                    margin=0.5, margin_pl=0.25, margin_lg=0.4, width=15, height=15, dpi=400, text_ratio=1, margin_lims=0.05,
                     plot_face="plain", axis_face="plain", legend_face="plain", raster_dev="ragg_png", pos="identity", 
-                    pos_legend=NULL, show_title=F, xy_line=F, force_bold=F, raster=F, save=F, save_svg=T) {
+                    pos_legend=NULL, show_title=F, xy_line=F, force_bold=F, raster=F, unify_lims=F, save=F, save_svg=T) {
   
   title = NULL
   e_text = element_text
@@ -394,10 +420,10 @@ plot_def = function(df, x, y, main=NULL, xlab=NULL, ylab=NULL, xlim=NULL, ylim=N
   }
   
   mapping = aes(x={{x}}, y={{y}})
-  # size = deparse(substitute(size))
+  size = deparse(substitute(size))
   color = deparse(substitute(color)) %>% filt_dash
   shape = deparse(substitute(shape)) %>% filt_dash
-  size = if (is.numeric(size)) size else as.numeric(deparse(substitute(size)))
+  # size = if (is.numeric(size)) size else deparse(substitute(size))
   size = tryCatch(as.numeric(size), warning=function(e) return(size))
   shape = tryCatch(as.numeric(shape), warning=function(e) return(shape))
   
@@ -442,6 +468,17 @@ plot_def = function(df, x, y, main=NULL, xlab=NULL, ylab=NULL, xlim=NULL, ylim=N
           axis.text.y = e_text(size=axis_tx, face=axis_face, margin=margin_y),
           legend.title = e_text(size=legend_tl, face=legend_face, margin=margin_lgl),
           legend.text = e_text(size=legend_tx, face=legend_face, margin=margin_lgx))
+  
+  if (unify_lims) {
+    df_ = df %>% filter(!is.na({{x}}) & !is.na({{y}}))
+    xrange = df_ %>% pull({{x}}) %>% range(na.rm=T)
+    yrange = df_ %>% pull({{y}}) %>% range(na.rm=T)
+    xy_min = min(xrange[1], yrange[1])
+    xy_max = max(xrange[2], yrange[2])
+    xy_margin = (xy_max - xy_min)*margin_lims
+    xlim = c(xy_min-xy_margin, xy_max+xy_margin)
+    ylim = xlim
+  }
   
   if (!is.null(xlim)) pl = pl + xlim(xlim)
   if (!is.null(ylim)) pl = pl + ylim(ylim)
@@ -497,7 +534,7 @@ boxplot_def = function(df, x, y, fill=NULL, main=NULL, xlab=NULL, ylab=NULL,
   reorder_def1 = function(x, ...) stats::reorder(x, ..., FUN=mean)
   reorder_def2 = function(x, ...) stats::reorder(x, ..., FUN=median)
   reorder_def = ifelse_def(!reorder_median, reorder_def1, reorder_def2)
-  reorder_def = ifelse_def(!reorder_rev, reorder_def, function(x, ...) rev(reorder_def))
+  reorder_def = ifelse_def(!reorder_rev, reorder_def, function(x, ...) rev(reorder_def(x, ...)))
   
   if (fill_string=="NULL" & !reorder) {
     mapping = aes(x={{x}}, y={{y}}, fill={{x}})
@@ -565,6 +602,58 @@ boxplot_def = function(df, x, y, fill=NULL, main=NULL, xlab=NULL, ylab=NULL,
   if (save) {
     save_fig(pl, main, svg=save_svg, width=width, height=height, dpi=dpi, units="cm")
   } else print(pl)
+}
+
+barplot_def = function(df, x=NULL, y=NULL, color = "black", fill = "white",
+                       main = NULL, xlab = NULL, ylab = NA, legend = NA,
+                       reorder = FALSE, reorder_func = median, reorder_rev = FALSE,
+                       pos = NULL, pos_legend = NULL, alpha = 0.5, 
+                       plot_tl = 22.5, axis_tl = 18, axis_tx = 15, text_tx = 15,
+                       legend_tl = 16.5, legend_tx = 12, angle_x = 30, hjust_x = 1, vjust_x = 1,
+                       margin = 0.5, margin_pl = 0.25, margin_lg = 0.4,
+                       width = 16, height = 12, dpi = 400, add_plot = c("mean_se", "point"), 
+                       plot_face = "plain", axis_face = "plain", legend_face = "plain",
+                       raster_dev = "ragg_png", raster = FALSE,
+                       save = FALSE, save_svg = TRUE, add = NULL, add_params = list(alpha=0.5), ...) {
+  
+  if (raster) suppressMessages(library(ggrastr))
+  if (is.null(pos)) pos <- position_dodge(width = 0.9)
+  
+  # NULL > Nothing, NA > x or y themselves
+  xlab = ifelse_def(!is.na(xlab), xlab, x)
+  ylab = ifelse_def(!is.na(ylab), ylab, y)
+  legend = ifelse_def(!is.na(legend), legend, fill)
+  
+  # [TODO] Reorder y if y is factor (which_fct)
+  if (!is.null(x) & !is.null(y) & reorder) {
+    lvl = reorder(df[[x]], df[[y]], FUN=reorder_func) %>% levels
+    lvl = if (!reorder_rev) lvl else rev(lvl)
+    df[[x]] = df[[x]] %>% factor(levels=lvl)
+  }
+  
+  pl = ggbarplot(df, x=x, y=y, color=color, fill=fill, position=pos, 
+                 add=add_plot, add.params=add_params, ...)
+  
+  pl = pl + labs(x = xlab, y = ylab, fill = legend)
+  
+  pl = pl + set_theme(
+    plot_tl = plot_tl, axis_tl = axis_tl, axis_tx = axis_tx,
+    angle_x = angle_x, hjust_x = hjust_x, vjust_x = vjust_x,
+    legend_tl = legend_tl, legend_tx = legend_tx, text_tx = text_tx,
+    margin = margin, margin_pl = margin_pl, margin_lg = margin_lg,
+    pos_legend = pos_legend, plot_face = plot_face, 
+    axis_face = axis_face, legend_face = legend_face
+  )
+  
+  if (is.null(legend)) pl = pl + theme(legend.position = "none")
+  if (!is.null(pos_legend)) pl = pl + theme(legend.position = pos_legend)
+  if (!is.null(add)) for (i in seq_along(add)) pl <- pl + add[[i]]
+  
+  if (save) {
+    save_fig_ggpubr(pl, main, width = width, height = height, dpi = dpi, svg = save_svg)
+  } else {
+    print(pl)
+  }
 }
 
 grid_def = function(df, x, y, fill, main=NULL, xlab=NULL, ylab=NULL, color=NULL, color_line="white", 
@@ -661,42 +750,11 @@ grid_def = function(df, x, y, fill, main=NULL, xlab=NULL, ylab=NULL, color=NULL,
   } else print(pl)
 }
 
-# venn_def = function(..., title=NULL, labels=NULL, col=NULL, is_list=F, show_label=T, 
-#                     text_size=12, set_name_size=12, width=27, height=27, save=F) {
-#   
-#   suppressMessages(library(ggvenn))
-#   Args = list(...)
-#   Args = Args %>% sapply(unique)
-#   
-#   if (is.null(col)) {
-#     if (length(Args)==2) {
-#       col = c("red", "blue")
-#     } else if (length(Args)==3) {
-#       col = c("red", "green", "blue")
-#     } else if (length(Args)==4) {
-#       col = c("red", "green", "yellow", "blue")
-#     } else col=NULL
-#   }
-#   
-#   names(Args) = labels
-#   if (show_label) {
-#     pl = ggvenn(Args, fill_color=col, fill_alpha=0.3, 
-#                 stroke_size=0.8, text_size=text_size, set_name_size=set_name_size)
-#   } else {
-#     pl = ggvenn(Args, fill_color=col, fill_alpha=0.3, 
-#                 stroke_size=0.8, text_size=text_size, set_name_size=0)
-#   }
-#   
-#   if (save) {
-#     file = sprintf("%s.png", title)
-#     ggsave(file, pl, width=width, height=height, units="cm")
-#   } else print(pl)
-# }
-
 venn_def = function(..., main=NULL, labels=NULL, col=NULL, add=NULL, 
                     alpha=0.75, label_alpha=0, text_size=6, set_size=6, 
                     margin_pl=0.25, margin_lg=0.4, legend_tl=12, legend_tx=12, 
-                    text_ratio=1, width=20, height=16, dpi=400, 
+                    text_ratio=1, width=20, height=16, dpi=400, margin_ratio=0.1,
+                    label_list=c("both", "count", "percent", "none"),
                     legend=T, force_bold=F, save=F, save_svg=T) {
   
   suppressMessages(library(ggVennDiagram))
@@ -723,9 +781,21 @@ venn_def = function(..., main=NULL, labels=NULL, col=NULL, add=NULL,
   
   margin_lg = margin(b=margin_lg, unit="cm")
   margin_pl = unit(rep(margin_pl, 4), units="cm")
+  shape_id = sprintf("%s01", length(Args))
   
-  pl = ggVennDiagram(Args, label_alpha=label_alpha, 
-                     label_size=text_size, set_size=set_size)
+  pl = ggVennDiagram(Args, label_alpha=label_alpha, label=label_list, 
+                     label_size=text_size, set_size=set_size, shape_id=shape_id)
+  
+  pb = pl %>% ggplot_build
+  if (length(margin_ratio)==1) margin_ratio = c(margin_ratio, margin_ratio)
+  
+  xrange = pb@layout$panel_params[[1]]$x.range
+  x_margin = margin_ratio[1]*(xrange[2]-xrange[1])
+  pl = pl + xlim(xrange[1]-x_margin, xrange[2]+x_margin)
+  
+  yrange = pb@layout$panel_params[[1]]$y.range
+  y_margin = margin_ratio[2]*(yrange[2]-yrange[1])
+  pl = pl + ylim(yrange[1]-y_margin, yrange[2]+y_margin)
   
   pl = pl + col + scale_color_manual(values=rep("black", length(Args)))
   if (isFALSE(legend)) pl = pl + theme(legend.position="none")
@@ -743,6 +813,7 @@ venn_def = function(..., main=NULL, labels=NULL, col=NULL, add=NULL,
 
 heatmap_def = function(df, main=NULL, Anno_Row=NULL, Anno_Col=NULL, breaks=NULL, 
                        color=NULL, color_type=NULL, color_bin=NULL, 
+                       color_bottom="royalblue2", color_top="firebrick2",
                        color_center="white", color_num="black", color_border="grey60", 
                        color_scale=1, text_ratio=1, text_row=15, text_col=15, text_num=15, 
                        tree_row=50, tree_col=50, width=20, height=20, dpi=400,  
@@ -755,7 +826,10 @@ heatmap_def = function(df, main=NULL, Anno_Row=NULL, Anno_Col=NULL, breaks=NULL,
   if (center_zero & from_zero) stop("Both center_zero=T and from_zero=T not compatible...")
   
   if (scale_col) df = df %>% scale %>% as.data.frame
-  if (scale_row) df = df %>% apply(1, scale) %>% t %>% as.data.frame
+  if (scale_row) {
+    col = colnames(df)
+    df = df %>% apply(1, scale) %>% t %>% as.data.frame %>% setNames(col)
+  }
   dist_df = df %>% unlist %>% na.omit %>% as.numeric
   
   norm_zero = function(x) (0-min(x)) / (max(x)-min(x))
@@ -772,9 +846,9 @@ heatmap_def = function(df, main=NULL, Anno_Row=NULL, Anno_Col=NULL, breaks=NULL,
   }
   
   if (is.null(color_type)) {
-    color_type = c("royalblue2", "white", "firebrick2")
-    color_type = ifelse_def(!above_zero, color_type, c("white", "firebrick2"))
-    color_type = ifelse_def(!below_zero, color_type, c("royalblue2", "white"))
+    color_type = c(color_bottom, color_center, color_top)
+    color_type = ifelse_def(!above_zero, color_type, c(color_center, color_top))
+    color_type = ifelse_def(!below_zero, color_type, c(color_bottom, color_center))
   }
   
   if (!from_zero) {
@@ -822,6 +896,7 @@ heatmap_def = function(df, main=NULL, Anno_Row=NULL, Anno_Col=NULL, breaks=NULL,
   text_row = text_row * text_ratio
   text_col = text_col * text_ratio
   text_num = text_num * text_ratio
+  if (!is.logical(show_num) && is.numeric(show_num)) show_num = round(df, show_num)
   
   pl = df %>% pheatmap(color=color, breaks=breaks, clustering_method=clust, 
                        cluster_rows=clust_row, cluster_cols=clust_col, 
@@ -835,6 +910,39 @@ heatmap_def = function(df, main=NULL, Anno_Row=NULL, Anno_Col=NULL, breaks=NULL,
   if (save) {
     save_fig(pl, main, svg=save_svg, ggplot=F, width=width, height=height, dpi=dpi, units="cm")
   } else print(pl)
+}
+
+heatmap_save = function(df, main=NULL, Anno_Row=NULL, Anno_Col=NULL, breaks=NULL, 
+                        color=NULL, color_type=NULL, color_bin=NULL, 
+                        color_center="white", color_num="black", color_border="grey60", 
+                        color_scale=1, text_ratio=1, text_row=15, text_col=15, text_num=15, 
+                        tree_row=50, tree_col=50, width=20, height=20, dpi=400,  
+                        clust="complete", clust_row=T, clust_col=T, show_row=F, show_col=T, 
+                        show_num=F, center_zero=F, from_zero=F, 
+                        scale_row=F, scale_col=F, save=F, save_svg=T, ...) {
+  
+  if (save_svg) {
+    file = sprintf("%s.svg", main)
+    svg(file, width=width/2.54, height=height/2.54)
+  } else {
+    file = sprintf("%s.png", main)
+    png(file, width=width, height=height, units="cm", res=dpi)
+  }
+  
+  heatmap_def(df = df, main = main,
+              Anno_Row = Anno_Row, Anno_Col = Anno_Col, breaks = breaks,
+              color_center = color_center, color_num = color_num, 
+              color_border = color_border, color_scale = color_scale,
+              text_ratio = text_ratio, text_row = text_row, 
+              text_col = text_col, text_num = text_num,
+              tree_row = tree_row, tree_col = tree_col,
+              width = width, height = height, dpi = dpi, 
+              clust = clust, clust_row = clust_row, clust_col = clust_col, 
+              show_row = show_row, show_col = show_col, show_num = show_num, 
+              center_zero = center_zero, from_zero = from_zero, 
+              scale_row = scale_row, scale_col = scale_col, save = F, ...)
+  
+  dev.off()
 }
 
 RMSE_Norm = function(pred, obs, na.rm=T) {
