@@ -24,9 +24,10 @@ GCNPath2026
 ├── SMILESVec                       
 │   └── source
 │       └── process_drug_svec.sh    Process drug data into SMILESVec Fingerprint
-├── _IC50_Prediction                Case study with cell lines (Colorectal, Breast, SCLC)
+├── _IC50_Prediction                Store data preprocessing steps
 ├── _case_study                     Case study with cell lines (Colorectal, Breast, SCLC)
 ├── _performance_tuning             Performances analysis in ablation tests
+├── _Supplementary_Data             Source data with large volumns for supplementary figures (4-7 and 32)
 ├── data                            Store daw data
 │   ├── cell_data                    - Cell transcriptome data
 │   ├── drug_data                    - Drug structure data in SMILES format
@@ -271,3 +272,22 @@ bash test_ccle.sh
 #    -out_grad_cam results/IC50_GDSC/Normal/RGCN/gcam_ccle_seed2021.csv \
 #    -col_cell Cell_BROAD_ID -col_drug Drug_CID -col_ic50 LN_IC50 -cpu 4
 ```
+
+# License
+Copyright (C) 2026, M Lee
+ 
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+ 
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+ 
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+# Citation
+This work would be soon accepted and published via Communications Biology.
