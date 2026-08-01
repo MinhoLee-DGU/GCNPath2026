@@ -156,38 +156,44 @@ def split_blind(ic50_data, args, nth=0, n_splits=10, n_repeats=1, seed=2021, cho
     return ic50_train, ic50_test
 
 
-def split_ic50(ic50_data, args, choice=0, nth=0, n_splits=10, 
-               n_splits_strict=5, n_repeats=3, seed=2021, retrain=False) :
+def split_ic50(
+    ic50_data, args, choice=0, nth=0, n_splits=10, 
+    n_splits_strict=5, n_repeats=3, seed=2021, retrain=False
+):
     
     # Use this function after the function filt_ic50
     split_def = split_even if choice==0 else split_blind
     n_splits = n_splits if choice in [0, 1, 2] else n_splits_strict
-    ic50_train, ic50_test = split_def(ic50_data, args, nth=nth, choice=choice,
-                                      n_splits=n_splits, n_repeats=n_repeats, seed=seed)
+    ic50_train, ic50_test = split_def(
+        ic50_data, args, nth=nth, choice=choice,
+        n_splits=n_splits, n_repeats=n_repeats, seed=seed
+    )
     
-    if choice not in [0, 1, 2, 3] :
+    if choice not in [0, 1, 2, 3]:
         raise Exception("\nchoice of IC50 split : 0 [Normal], 1 [Cell_Blind], 2 [Drug_Blind], 3 [Strict_Blind]")
     
-    if not retrain :
-        ic50_train, ic50_valid = split_def(ic50_train, args, nth=0, choice=choice, 
-                                           n_splits=n_splits-1, n_repeats=n_repeats, seed=seed)
+    if not retrain:
+        ic50_train, ic50_valid = split_def(
+            ic50_train, args, nth=0, choice=choice, 
+            n_splits=n_splits-1, n_repeats=n_repeats, seed=seed
+        )
         nc_valid = ic50_valid[args.col_cell].nunique()
         nd_valid = ic50_valid[args.col_drug].nunique()
-
+    
     nc_train = ic50_train[args.col_cell].nunique()
     nd_train = ic50_train[args.col_drug].nunique()
     nc_test = ic50_test[args.col_cell].nunique()
     nd_test = ic50_test[args.col_drug].nunique()
     
-    if retrain :
-        print("# [Cell] Train : Test = {} : {}".format(nc_train, nc_test))
-        print("# [Drug] Train : Test = {} : {}".format(nd_train, nd_test))
-        print("# [IC50] Train : Test = {} : {}".format(len(ic50_train), len(ic50_test)))
+    if retrain:
+        print(f"# [Cell] Train : Test = {nc_train} : {nc_test}")
+        print(f"# [Drug] Train : Test = {nd_train} : {nd_test}")
+        print(f"# [IC50] Train : Test = {ic50_train} : {ic50_test}")
         return ic50_train, ic50_test
-    else :
-        print("# [Cell] Train : Valid : Test = {} : {} : {}".format(nc_train, nc_valid, nc_test))
-        print("# [Drug] Train : Valid : Test = {} : {} : {}".format(nd_train, nd_valid, nd_test))
-        print("# [IC50] Train : Valid : Test = {} : {} : {}".format(len(ic50_train), len(ic50_valid), len(ic50_test)))
+    else:
+        print(f"# [Cell] Train : Valid : Test = {nc_train} : {nc_valid} : {nc_test}")
+        print(f"# [Drug] Train : Valid : Test = {nd_train} : {nd_valid} : {nd_test}")
+        print(f"# [IC50] Train : Valid : Test = {len(ic50_train)} : {len(ic50_valid)} : {len(ic50_test)}")
         return ic50_train, ic50_valid, ic50_test
 
 
@@ -236,3 +242,40 @@ def time_to_csv(train_time_list=None, test_time=None, valid_time=None, dir_time=
     times_info.to_csv(dir_time, header=True, index=False)
     print(times_info)
 
+
+def generate_combi(
+    cell_data, 
+    drug_data, 
+    subset_cell=None, 
+    subset_drug=None, 
+    col_cell="Cell", 
+    col_drug="Drug", 
+    col_ic50="LN_IC50"
+):
+    import itertools
+    
+    # Helper to check if a value is specified
+    def is_spec(val):
+        return val is not None and val != "" and str(val).upper() not in ["NONE", "NULL"]
+        
+    if is_spec(subset_cell):
+        cells = [x.strip() for x in str(subset_cell).split("|")]
+        # Keep only cells that exist in cell_data
+        cells = [c for c in cells if c in cell_data]
+        if not cells:
+            print("[Warning] None of the specified subset_cells were found in cell_data!")
+    else:
+        cells = list(cell_data.keys())
+        
+    if is_spec(subset_drug):
+        drugs = [x.strip() for x in str(subset_drug).split("|")]
+        # Keep only drugs that exist in drug_data
+        drugs = [d for d in drugs if d in drug_data]
+        if not drugs:
+            print("[Warning] None of the specified subset_drugs were found in drug_data!")
+    else:
+        drugs = list(drug_data.keys())
+        
+    comb = list(itertools.product(cells, drugs))
+    df = pd.DataFrame(comb, columns=[col_cell, col_drug]).astype(str)
+    return df
