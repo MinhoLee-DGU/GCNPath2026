@@ -404,9 +404,9 @@ for (gex_name_single in gex_names) {
       
       # If columns are found, perform mapping
       if (c1 %in% colnames(anno_genes_df) && c2 %in% colnames(anno_genes_df)) {
-        match_row = which(tolower(as.character(anno_genes_df[[c1]])) == tolower(gex_name_single))
+        match_row = which(tolower(as.character(anno_genes_df[[c2]])) == tolower(gex_name_single))
         if (length(match_row) > 0) {
-          mapped_val = anno_genes_df[[c2]][match_row[1]]
+          mapped_val = anno_genes_df[[c1]][match_row[1]]
           cat("Mapped", gex_name_single, "to:", mapped_val, "\n")
           if (as.character(mapped_val) %in% colnames(gex_df)) {
             mapped_col = as.character(mapped_val)
