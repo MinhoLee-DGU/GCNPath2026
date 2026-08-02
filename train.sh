@@ -51,7 +51,7 @@ case $choice in
     *) fold_list=$(seq 0 9) ;;
 esac
 
-use_slurm=1
+use_slurm=0
 for nth in ${fold_list[@]}
 do
     bash train_write.sh "$data" $dir_out $choice $nth \
