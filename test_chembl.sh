@@ -14,7 +14,7 @@ col_ic50=LN_IC50
 col_drug=Molecule_ChEMBL_ID
 out_cam=None
 
-use_slurm=1
+use_slurm=0
 seed_list=$(seq 2021 2030)
 dir_model=results/IC50_GDSC/$test_type/$model_type
 

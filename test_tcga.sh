@@ -16,7 +16,7 @@ col_cell=Sample
 col_drug=Drug_CID
 col_ic50=0
 
-use_slurm=1
+use_slurm=0
 seed_list=$(seq 2021 2030)
 
 for seed in ${seed_list[@]}

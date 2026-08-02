@@ -12,13 +12,13 @@ gnn_drug=2
 mode_cell=3
 mode_drug=3
 
-dir_out=RGCN_Noise
+dir_out=RGCN
 dir_cell=processed/cell_data_biocarta
 dir_drug=processed/drug_data
 
 case $gnn_cell in
     0) cell=${dir_cell}/SANGER_RNA_Lin.pickle ;;
-    *) cell=${dir_cell}/SANGER_RNA_KNN5_STR9_Reg_Corr_Noise.pickle ;;
+    *) cell=${dir_cell}/SANGER_RNA_KNN5_STR9_Reg_Corr.pickle ;;
 esac
 
 case $gnn_drug in
@@ -44,7 +44,7 @@ option="-gnn_cell $gnn_cell -gnn_drug $gnn_drug -mode_cell $mode_cell -mode_drug
 option="$option -n_hid_cell 3 -n_hid_drug 3 -n_hid_pred 2 -act 3"
 
 nth=0
-use_slurm=1
+use_slurm=0
 seed_list=$(seq 2021 2030)
 
 for seed in ${seed_list[@]} 
